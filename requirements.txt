@@ -1,3 +1,0 @@
-mlx==0.32.2
-mflux==0.20.0
-huggingface-hub==1.32.0
