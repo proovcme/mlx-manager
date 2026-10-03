@@ -70,7 +70,7 @@ class LifecycleTests(unittest.TestCase):
         manager._runtime.start.side_effect = RuntimeError('failed executable')
         manager._lock_heavy = Mock()
         manager._unlock_heavy = Mock()
-        manager._stop_external_chat = Mock()
+        manager._stop_external = Mock()
         manager._heavy_held = False
         def reconcile():
             manager._mode = 'idle'

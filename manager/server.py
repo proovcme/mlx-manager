@@ -1,4 +1,4 @@
-"""Local HTTP control plane and stable ExternalChat/ChatProxy endpoint."""
+"""Local HTTP control plane and optional external chat endpoint."""
 
 from __future__ import annotations
 
@@ -78,10 +78,10 @@ class Handler(BaseHTTPRequestHandler):
         MANAGER.chat_enter()
         try:
             headers = {"Content-Type": "application/json"}
-            session = self.headers.get("X-ChatProxy-Session")
+            session = self.headers.get(config.SESSION_HEADER) if config.SESSION_HEADER else None
             if session:
-                headers["X-ChatProxy-Session"] = session
-            request = urllib.request.Request(config.CHAT_PROXY_V2 + path,
+                headers[config.SESSION_HEADER] = session
+            request = urllib.request.Request(config.PROXY_ENDPOINT + (path.replace("/api/chat/sessions",config.SESSION_PATH,1) if path.startswith("/api/chat/sessions") else path),
                                              data=body, headers=headers,
                                              method=method)
             try:
@@ -90,9 +90,7 @@ class Handler(BaseHTTPRequestHandler):
                 response = exc
             with response:
                 self.send_response(response.status)
-                for name in ("Content-Type", "Content-Length", "X-ChatProxy-Session",
-                             "X-ChatProxy-Prompt-Tokens", "X-ChatProxy-Checkpoint",
-                             "X-ChatProxy-Evicted-Turns", "X-ChatProxy-Evicted-Tokens"):
+                for name in ("Content-Type", "Content-Length", *([config.SESSION_HEADER] if config.SESSION_HEADER else [])):
                     value = response.headers.get(name)
                     if value:
                         self.send_header(name, value)
@@ -140,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, MANAGER.image_progress())
             elif path == "/v1/models":
                 self._proxy("GET", path)
-            elif path.startswith("/chat_proxy/sessions/"):
+            elif config.SESSION_PATH and path.startswith("/api/chat/sessions/"):
                 self._proxy("GET", path)
             else:
                 self._json(404, {"error": "Unknown route"})
@@ -195,7 +193,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(202, MANAGER.generate(self._body()))
             elif path == "/api/image/cancel":
                 self._json(200, MANAGER.cancel())
-            elif path in ("/chat_proxy/sessions", "/v1/chat/completions"):
+            elif path == "/v1/chat/completions" or (config.SESSION_PATH and path == "/api/chat/sessions"):
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > MAX_BODY:
                     raise ValueError("Request body outside limit")
@@ -267,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "Cross-origin action refused"})
             return
         path = urlsplit(self.path).path
-        if not path.startswith("/chat_proxy/sessions/") or not path.endswith("/state"):
+        if not config.SESSION_PATH or not path.startswith("/api/chat/sessions/") or not path.endswith("/state"):
             self._json(404, {"error": "Unknown route"})
             return
         try:

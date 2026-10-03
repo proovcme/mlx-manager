@@ -1,4 +1,5 @@
 """Full-pipeline parity gate with local weights; timings are cold checks, not medians."""
+from experiments.manager_config import add_arguments, local_snapshot
 import argparse
 import fcntl
 import gc
@@ -20,18 +21,19 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prompt-file',type=Path)
     parser.add_argument('--output',type=Path,default=Path('local/production-parity'))
+    add_arguments(parser)
     args=parser.parse_args()
     prompt=args.prompt_file.read_text().strip() if args.prompt_file else PROMPT
     args.output.mkdir(parents=True,exist_ok=True)
-    require_idle('http://127.0.0.1:1924')
-    with (Path.home()/'.local/share/mlx-manager/heavy.lock').open('a+') as lock:
+    require_idle(args.manager_url)
+    with args.lock_path.open('a+') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        require_idle('http://127.0.0.1:1924')
-        snapshot=engine._snapshot(None)
+        require_idle(args.manager_url)
+        snapshot=engine._snapshot(local_snapshot())
         report=dict(scope='Full pipeline parity check; one cold run per mode, no warm-up; timings are not a benchmark median',width=1152,height=768,steps=20,seed=1977,cache='off',mlx=mx.__version__,snapshot_revision=snapshot.name,runs=[])
         denoise=engine._denoise
         for mode in ('baseline','accelerated'):
-            require_idle('http://127.0.0.1:1924')
+            require_idle(args.manager_url)
             gc.collect();mx.clear_cache();mx.reset_peak_memory()
             stages={}
             def capture(*a,**kw):
@@ -42,7 +44,7 @@ def main():
             def step(index,n,total):
                 if n==1 or n%5==0 or n==total:
                     print(f'{mode}: {n}/{total}',flush=True)
-                    require_idle('http://127.0.0.1:1924')
+                    require_idle(args.manager_url)
             began=time.monotonic()
             job=Job(1,prompt,args.output/(mode+'.png'),1152,768,20,1977,1.0)
             with patch.object(engine,'_denoise',side_effect=capture):

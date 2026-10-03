@@ -61,7 +61,7 @@ class RuntimeSafetyTests(unittest.TestCase):
     def test_busy_heavy_lock_prevents_launch_and_model_stop(self):
         manager = self.manager()
         manager._lock_heavy = Mock(side_effect=core.ManagerError("Heavy-memory lock held"))
-        with patch.object(manager, "_stop_external_chat") as stop:
+        with patch.object(manager, "_stop_external") as stop:
             with self.assertRaisesRegex(core.ManagerError, "lock held"):
                 manager.start_model("valid")
             stop.assert_not_called()

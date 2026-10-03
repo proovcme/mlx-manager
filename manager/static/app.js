@@ -1,3 +1,5 @@
+const managerBase = document.querySelector('meta[name="mlx-manager-base"]')?.content.replace(/\/+$/, "") || "";
+const managerURL = path => managerBase + path;
 const $ = id => document.getElementById(id);
 const bytes = n => n == null ? '—' : (n / 2 ** 30).toFixed(1) + ' ГБ';
 let listing = {models: [], runtimes: []}, selected = null, state = null, working = false;
@@ -9,7 +11,7 @@ let promptJob = null, promptPollBusy = false, appliedPromptJob = null;
 const promptBusy = () => promptJob?.state === 'running';
 const draftFields = ['prompt','system-prompt','max-tokens','temperature','size','steps','seed','cache','backend','prompt-model','series-count'];
 function savingStatus() {
-  $('save-status').textContent = unsaved.size ? 'Есть несохранённые изменения' : saveCount ? 'Сохраняем…' : 'Сохранено на этом Mac';
+  $('save-status').textContent = unsaved.size ? 'Есть несохранённые изменения' : saveCount ? 'Сохраняем…' : 'Сохранено на Mac';
   $('retry-save').hidden = !unsaved.size;
 }
 function persist(record) {
@@ -32,6 +34,7 @@ function captureDraft() {
   let draft=drafts.get(selected);
   if(!draft){draft={id:'draft_'+selected,kind:'draft',model:selected,revision:0,value};drafts.set(selected,draft)}
   value['auto-enhance']=$('auto-enhance').checked;
+  value['web-search']=$('web-search').checked;
   value.expansion=draft.value?.expansion;
   draft.value=value; return draft;
 }
@@ -43,12 +46,18 @@ function newConversation(model=selected) {
 function currentRecord() {return records.get(chats.get(selected)) || newConversation();}
 function renderHistory() {
   const image=current()?.kind==='image';
-  $('chat-history').hidden=image; $('new-chat').hidden=image;
-  if(image)return;
-  const active=chats.get(selected), entries=historyIndex.filter(c=>c.model===selected);
-  if(active && !entries.some(c=>c.id===active))entries.unshift({id:active,title:records.get(active)?.value.title || 'Новый чат'});
-  $('chat-history').replaceChildren(...entries.map(c=>new Option(c.title,c.id)));
-  $('chat-history').value=active || ''; $('chat-history').disabled=working || !workspaceReady; $('new-chat').disabled=working || !selected || !workspaceReady;
+  $('chat-history').hidden=false; $('new-chat').hidden=image;
+  const active=image ? null : chats.get(selected), entries=[...historyIndex];
+  if(active && !entries.some(c=>c.id===active))entries.unshift({id:active,model:selected,title:records.get(active)?.value.title || 'Новый чат'});
+  const groups=new Map();
+  for(const entry of entries) {
+    if(!groups.has(entry.model)) {const group=document.createElement('optgroup');group.label=listing.models.find(m=>m.id===entry.model)?.name || 'Сохранённая модель';groups.set(entry.model,group);}
+    groups.get(entry.model).append(new Option(entry.title,entry.id));
+  }
+  const placeholder=new Option(image ? 'Чаты — все модели ('+historyIndex.length+')' : 'Выберите чат', '');placeholder.disabled=true;
+  $('chat-history').replaceChildren(placeholder,...groups.values());
+  $('chat-history').value=active || ''; $('chat-history').disabled=working || !workspaceReady || !entries.length;
+  $('new-chat').disabled=working || !selected || !workspaceReady;
 }
 async function loadWorkspace() {
   const data=await api('/api/workspace'); historyIndex=data.chats;
@@ -65,6 +74,7 @@ function repeatImage(job) {
 }
 
 let displayedImage = null;
+let copiedReply=null,copyFeedbackTimer=null;
 let chatActivity = null, progressBusy = false;
 const duration = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2,'0')}`;
 function renderActivity() {
@@ -87,6 +97,7 @@ function renderActivity() {
   }
   const chat = !image && chatActivity?.id === selected ? chatActivity : null;
   const loading = !image && state?.runtime?.model?.id === selected && state.runtime.state === 'starting';
+  $('activity').classList.toggle('chat-activity',Boolean(chat || loading));
   $('activity').hidden = !((image && job) || chat || loading);
   if ($('activity').hidden) return;
   if(loading && !chat) {
@@ -100,7 +111,7 @@ function renderActivity() {
     $('activity-stage').textContent = chat.phase;
     $('activity-time').textContent = duration((Date.now()-chat.started)/1000);
     $('activity-progress').removeAttribute('value');
-    $('activity-detail').textContent = 'Ответ поступает потоком';
+    $('activity-detail').textContent = chat.phase.includes('Ищет') ? 'Ищем источники для последнего сообщения' : chat.phase.includes('выдержки') ? 'Источники найдены, готовим ответ' : 'Ответ поступает потоком';
     return;
   }
   const p = job.progress || {}, labels = {preparing:'Подготовка',loading_encoder:'Загрузка текстового энкодера',encoding:'Обработка промпта',loading_transformer:'Загрузка модели изображения',denoising:'Генерация',decoding:'Декодирование изображения',done:'Изображение готово',failed:'Ошибка генерации',cancelled:'Генерация отменена',detached:'Менеджер перезапущен',interrupted:'Задание прервано',cancelling:'Отмена генерации…'};
@@ -113,7 +124,7 @@ function renderActivity() {
   else if (stage === 'denoising' && total) $('activity-progress').value = 100 * (p.step || 0) / total;
   else if (stage === 'decoding') $('activity-progress').value = 100;
   else $('activity-progress').removeAttribute('value');
-  $('activity-detail').textContent = stage === 'denoising' ? total ? `Шаг ${p.step || 0} из ${total}${p.skipped != null ? ' · вычислено '+p.computed+' · из кеша '+p.skipped : ''}` : 'Ожидаем отметку первого шага' : stage === 'cancelling' ? 'Останавливаем процесс; если он не отвечает, завершение будет принудительным.' : stage === 'cancelled' ? 'Задание остановлено' : stage === 'interrupted' ? 'Процесс завершился без результата. Можно повторить генерацию.' : stage === 'failed' ? humanError(job.error) || `Код завершения: ${job.exit_code ?? '—'}. Можно повторить генерацию; подробности в логах.` : stage === 'done' ? 'Сохранено на этом Mac' : 'Операция выполняется';
+  $('activity-detail').textContent = stage === 'denoising' ? total ? `Шаг ${p.step || 0} из ${total}${p.skipped != null ? ' · вычислено '+p.computed+' · из кеша '+p.skipped : ''}` : 'Ожидаем отметку первого шага' : stage === 'cancelling' ? 'Останавливаем процесс; если он не отвечает, завершение будет принудительным.' : stage === 'cancelled' ? 'Задание остановлено' : stage === 'interrupted' ? 'Процесс завершился без результата. Можно повторить генерацию.' : stage === 'failed' ? humanError(job.error) || `Код завершения: ${job.exit_code ?? '—'}. Можно повторить генерацию; подробности в логах.` : stage === 'done' ? 'Сохранено на Mac' : 'Операция выполняется';
 }
 async function refreshProgress() {
   renderActivity();
@@ -130,7 +141,7 @@ async function refreshProgress() {
   } catch (_) {} finally {progressBusy=false;}
 }
 async function api(path, method = 'GET', body) {
-  const response = await fetch(path, {method, headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+  const response = await fetch(managerURL(path), {method, headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   const data = await response.json();
   if (!response.ok) throw Error(humanError(data.error || response.statusText));
   return data;
@@ -160,6 +171,9 @@ function activeModel() {
   if (state?.mode === 'image') return 'qwen-image-21';
   if (state?.mode === 'model') return state.runtime?.model?.id;
   return null;
+}
+function ensureHistoryModel(record) {
+  if(!listing.models.some(model=>model.id===record.model)) listing.models.push({id:record.model,name:record.value.model_name || 'Сохранённый чат',kind:'chat',available:false,missing:true,backends:[],weight_bytes:0});
 }
 function renderModels() {
   const list = $('models'); list.replaceChildren();
@@ -191,24 +205,30 @@ async function choose(id) {
   $('backend').hidden = model?.kind === 'image';
   $('image-options').hidden = model?.kind !== 'image';
   $('chat-options').hidden = model?.kind === 'image';
+  $('web-options').hidden = model?.kind === 'image';
   $('prompt-options').hidden = model?.kind !== 'image';
   renderPromptModels();
   $('send').textContent = model?.kind === 'image' ? 'Создать изображение' : 'Отправить';
-  $('prompt').placeholder = model?.kind === 'image' ? 'Опишите изображение…' : 'Сообщение модели…';
+  $('prompt').placeholder = model?.kind === 'image' ? 'Опишите изображение…' : 'Напишите сообщение…';
   const value=drafts.get(id)?.value || {};
   const defaults={prompt:'','system-prompt':'','max-tokens':'2048',temperature:'0.7',size:'1152x768',steps:'20',seed:'1977',cache:'off',backend:'auto','series-count':'1','prompt-model':$('prompt-model').value};
   for(const key of Object.keys(defaults))$(key).value=value[key] ?? defaults[key];
   $('prompt-model').dataset.chosen=$('prompt-model').value;
   $('auto-enhance').checked=value['auto-enhance'] === true;
+  $('web-search').checked=value['web-search'] === true;
   showPromptPreview(value.expansion);
-  renderHistory(); renderModels(); renderConversation(); updateControls(); renderActivity();
+  $('catalog-toggle').setAttribute('aria-expanded','false');document.querySelector('.workspace>aside').classList.remove('models-visible');
+  resizePrompt(); renderHistory(); renderModels(); renderConversation(); $('conversation').scrollTop=$('conversation').scrollHeight; updateLatestButton(); updateControls(); renderActivity();
 }
 function renderConversation() {
-  const area = $('conversation'); area.replaceChildren($('prompt-preview'));
+  const area = $('conversation');
+  const previousTop=area.scrollTop, follow=nearLatest(area);
+  const expanded=new Set(Array.from(area.querySelectorAll('details[open][data-detail]'),d=>d.dataset.detail));
+  area.replaceChildren($('prompt-preview'));
   if (current()?.kind === 'image') {
     const job=gallery.find(j=>j.id===viewingImage);
     if(job) {
-      const image=document.createElement('img');image.className='image-result';image.alt='Созданное изображение';image.src='/api/image/output?job='+encodeURIComponent(job.id);
+      const image=document.createElement('img');image.className='image-result';image.alt='Созданное изображение';image.src=managerURL('/api/image/output?job='+encodeURIComponent(job.id));
       const tools=document.createElement('div');tools.className='image-tools';
       const back=document.createElement('button');back.textContent='← Галерея';back.onclick=()=>{viewingImage=null;renderConversation()};
       const repeat=document.createElement('button');repeat.textContent='Повторить параметры';repeat.disabled=!job.parameters;repeat.onclick=()=>repeatImage(job);
@@ -223,7 +243,7 @@ function renderConversation() {
       const grid=document.createElement('div');grid.className='gallery';
       for(const item of gallery) {
         const card=document.createElement('button');card.className='image-card';card.type='button';card.setAttribute('aria-label','Открыть изображение '+item.id);
-        const img=document.createElement('img');img.src='/api/image/output?job='+encodeURIComponent(item.id);img.alt='';img.loading='lazy';
+        const img=document.createElement('img');img.src=managerURL('/api/image/output?job='+encodeURIComponent(item.id));img.alt='';img.loading='lazy';
         const label=document.createElement('span');label.className='caption';label.textContent=new Date(item.saved_at*1000).toLocaleString('ru-RU');card.append(img,label);
         card.onclick=()=>{viewingImage=item.id;renderConversation()};grid.append(card);
       }
@@ -239,82 +259,142 @@ function renderConversation() {
     const title = document.createElement('div'); title.className = 'empty-title'; title.textContent = current()?.name || 'Выберите модель';
     const hint = document.createElement('p'); hint.textContent = current() ? 'Запустите модель и начните разговор' : 'Поместите MLX-модель в ~/models или Hugging Face кеш и обновите каталог кнопкой ↻. Для чата нужен движок MLX LM или oMLX.'; empty.append(title, hint); area.append(empty); return;
   }
-  for (const message of history) {
-    const row = document.createElement('article'); row.className = 'message ' + message.role;
+  for (const [index,message] of history.entries()) {
+    const row = document.createElement('article'); row.className = 'message ' + message.role; row.dataset.messageIndex=String(index);
     const label = document.createElement('div'); label.className = 'speaker'; label.textContent = message.role === 'user' ? 'Вы' : current().name;
-    row.append(label);
+    const header=document.createElement('div');header.className='message-header';header.append(label);row.append(header);
     const thinking=message.content.match(/^\s*<think>([\s\S]*?)(?:<\/think>([\s\S]*)|$)/);
     const visibleReasoning=thinking ? thinking[1] : message.reasoning;
-    if (visibleReasoning) { const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('pre'); summary.textContent = 'Рассуждение'; text.textContent = visibleReasoning; details.append(summary, text); row.append(details); }
-    const body = document.createElement('div'); body.className = 'message-body'; body.textContent = thinking ? thinking[2] || '' : message.content; row.append(body); area.append(row);
+    if (visibleReasoning) { const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('pre'); details.dataset.detail=index+'-reasoning';details.open=expanded.has(details.dataset.detail);summary.textContent = 'Рассуждение'; text.textContent = visibleReasoning; details.append(summary, text); row.append(details); }
+    const body = document.createElement('div'); body.className = 'message-body'; body.textContent = thinking ? thinking[2] || '' : message.content; row.append(body);
+    if(Array.isArray(message.web_search?.sources) && message.web_search.sources.length) {
+      const details=document.createElement('details');details.className='web-sources';details.dataset.detail=index+'-sources';details.open=expanded.has(details.dataset.detail);const summary=document.createElement('summary');summary.textContent='Источники · '+message.web_search.sources.length;details.append(summary);
+      const query=document.createElement('p');query.className='caption';query.textContent='Запрос: '+message.web_search.query+' · '+message.web_search.provider;details.append(query);
+      for(const source of message.web_search.sources.slice(0,5)) {
+        try {const url=new URL(source.url);if(!['http:','https:'].includes(url.protocol) || url.username || url.password)continue;}catch(_){continue;}
+        const link=document.createElement('a');link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='['+source.id+'] '+source.title;
+        const item=document.createElement('div');item.className='web-source';const excerpt=document.createElement('p');excerpt.textContent=source.snippet;item.append(link,excerpt);details.append(item);
+      }
+      row.append(details);
+    }
+    if(message.role==='assistant') {
+      const copy=document.createElement('button'),key=currentRecord().id+':'+index;
+      copy.type='button';copy.className='quiet copy-answer';copy.dataset.copyReply=key;copy.setAttribute('aria-label','Скопировать ответ');
+      copy.textContent=copiedReply===key ? 'Скопировано' : 'Копировать';copy.disabled=!body.textContent.trim();
+      copy.onclick=async()=>{
+        try {await navigator.clipboard.writeText(body.textContent);copiedReply=key;copy.textContent='Скопировано';clearTimeout(copyFeedbackTimer);
+          copyFeedbackTimer=setTimeout(()=>{if(copiedReply===key){copiedReply=null;for(const button of document.querySelectorAll('.copy-answer'))button.textContent='Копировать';}},2000);
+        } catch(error) {notice('Не удалось скопировать ответ. Проверьте разрешение браузера на буфер обмена.');}
+      };
+      header.append(copy);
+    }
+    if(message.role==='assistant' && !body.textContent && working) {body.textContent=chatActivity?.phase || 'Готовит ответ…';body.classList.add('pending-answer');}
+    area.append(row);
   }
+  area.scrollTop=follow ? area.scrollHeight : previousTop;
+  updateLatestButton();
 }
+function updateStreamingMessage(index,message) {
+  const area=$('conversation'),follow=nearLatest(area);
+  const row=area.querySelector(`[data-message-index="${index}"]`);
+  if(!row){renderConversation();return;}
+  const thinking=message.content.match(/^\s*<think>([\s\S]*?)(?:<\/think>([\s\S]*)|$)/);
+  const content=thinking ? thinking[2] || '' : message.content;
+  const reasoning=thinking ? thinking[1] : message.reasoning;
+  const body=row.querySelector('.message-body');body.textContent=content || chatActivity?.phase || 'Готовит ответ…';body.classList.toggle('pending-answer',!content);
+  const copy=row.querySelector('.copy-answer');if(copy)copy.disabled=!content.trim();
+  if(reasoning){
+    let details=row.querySelector('details:not(.web-sources)');
+    if(!details){details=document.createElement('details');details.dataset.detail=index+'-reasoning';const summary=document.createElement('summary');summary.textContent='Рассуждение';details.append(summary,document.createElement('pre'));row.insertBefore(details,body);}
+    details.querySelector('pre').textContent=reasoning;
+  }
+  if(follow)area.scrollTop=area.scrollHeight;updateLatestButton();
+}
+function nearLatest(area=$('conversation')) {return area.scrollHeight-area.clientHeight-area.scrollTop<64;}
+function updateLatestButton() {$('latest-message').hidden=current()?.kind==='image' || nearLatest();}
+$('conversation').addEventListener('scroll',updateLatestButton,{passive:true});
+$('conversation').addEventListener('toggle',updateLatestButton,true);
+window.addEventListener('resize',updateLatestButton);
+$('latest-message').onclick=()=>{const area=$('conversation');area.scrollTop=area.scrollHeight;updateLatestButton();};
+function resizePrompt() {const field=$('prompt');field.style.height='auto';field.style.height=Math.min(120,field.scrollHeight)+'px';}
+$('prompt').addEventListener('input',resizePrompt);
+$('chat-options').onclick=()=>{$('chat-settings').showModal();};
 function updateControls() {
   const busy=working || promptBusy();
   $('scan').disabled=busy; $('backend').disabled=busy;
   for(const button of $('models').querySelectorAll('button'))button.disabled=busy;
   const model = current(), reserved = state?.reserved, runningImage = state?.job?.state === 'running';
   const active = selected === activeModel();
-  const ready = active && (state?.mode === 'external_chat' || state?.mode === 'image' || state?.runtime?.state === 'ready');
-  $('delete-model').disabled = !model || busy || reserved || state?.mode !== 'idle';
+  const ready = !model?.missing && active && (state?.mode === 'external_chat' || state?.mode === 'image' || state?.runtime?.state === 'ready');
+  $('delete-model').disabled = !model || model.missing || busy || reserved || state?.mode !== 'idle';
   $('delete-model').title = state?.mode !== 'idle' || reserved ? 'Сначала выгрузите модели и дождитесь окончания заданий' : 'Проверить путь и переместить модель в корзину';
   $('start').disabled = !model?.available || busy || reserved || runningImage || state?.mode === 'conflict' || state?.mode === 'external_image';
   $('stop').disabled = busy || reserved || runningImage || !activeModel();
   const autoImage=model?.kind==='image' && ($('auto-enhance').checked || Number($('series-count').value)>1) && model.available && !['conflict','external_image'].includes(state?.mode);
   $('send').disabled = !(ready || autoImage) || busy || reserved || runningImage || Boolean(state?.active_chat_requests);
   $('enhance').disabled=!model || busy || reserved || runningImage || !$('prompt-model').value || ['conflict','external_image'].includes(state?.mode);
-  for(const id of ['auto-enhance','prompt-model','series-count','prompt','restore-idea'])$(id).disabled=busy;
+  for(const id of ['auto-enhance','web-search','prompt-model','series-count','restore-idea','chat-options'])$(id).disabled=busy;
+  $('prompt').disabled=busy && !chatActivity;
+  $('send').textContent=model?.kind==='image' ? 'Создать изображение' : chatActivity ? 'Ждём ответ…' : 'Отправить';
+  $('send').hidden=Boolean(chatActivity);
+  $('prompt').placeholder=chatActivity ? 'Можно написать следующее сообщение…' : model?.kind==='image' ? 'Опишите изображение…' : 'Напишите сообщение…';
   $('cancel-prompt').hidden=!promptBusy(); $('cancel-prompt').disabled=promptJob?.stage==='cancelling';
   $('cancel-prompt').textContent=promptJob?.stage==='generating' ? 'Остановить серию' : 'Остановить подготовку';
  $('cancel-chat').hidden=!controller; renderHistory(); $('cancel').hidden = !runningImage || promptBusy(); $('cancel').disabled = busy || Boolean(state?.job?.cancel_reason);
   const failedModel = state?.runtime?.state === 'failed' && state.runtime.model?.id === selected;
   $('model-status').textContent = failedModel ? 'Ошибка запуска · можно повторить' : reserved ? 'GPU занят другим заданием' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX' : 'Не запущена';
-  $('compose-hint').textContent = reserved ? 'Другое задание занимает GPU; дождитесь его завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : 'Чаты и промпты сохраняются на этом Mac';
+  $('compose-hint').textContent = reserved ? 'Другое задание занимает GPU; дождитесь его завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : !ready ? 'Сначала запустите модель' : state?.active_chat_requests ? 'Модель отвечает в другом окне — дождитесь завершения' : 'Enter — отправить · Shift+Enter — новая строка';
+  if(chatActivity)$('compose-hint').textContent='Модель отвечает · следующее сообщение можно отправить после ответа';
   renderActivity();
 }
 async function scan() {
-  try { listing = await api('/api/catalog?refresh=1'); $('engines').textContent = listing.runtimes.map(r => r.name).join(' · ') || 'Движки не найдены'; $('roots').replaceChildren(...listing.roots.map(root => {const d=document.createElement('div'); d.textContent=root; return d})); if (!current()) await choose((promptBusy() ? 'qwen-image-21' : activeModel()) || listing.models.find(m=>m.id===localStorage.getItem('selected-model'))?.id || listing.models[0]?.id); else renderModels(); renderPromptModels(); }
+  try { listing = await api('/api/catalog?refresh=1'); $('engines').textContent = listing.runtimes.map(r => r.name).join(' · ') || 'Движки не найдены'; $('roots').replaceChildren(...listing.roots.map(root => {const d=document.createElement('div'); d.textContent=root; return d})); if (!current() && records.has(chats.get(selected)))ensureHistoryModel(records.get(chats.get(selected))); if (!current()) await choose((promptBusy() ? 'qwen-image-21' : activeModel()) || listing.models.find(m=>m.id===localStorage.getItem('selected-model'))?.id || listing.models[0]?.id); else renderModels(); renderPromptModels(); }
   catch (error) { notice(error.message); }
 }
+let statusRefreshing=false;
 async function refresh() {
+  if(statusRefreshing)return;statusRefreshing=true;
   try { state = await api('/api/status'); promptJob=state.prompt_enhancement || promptJob; $('connection').textContent = state.reserved ? 'GPU занят другим заданием' : 'Локально · ' + (state.mode === 'idle' ? 'Память свободна' : state.mode === 'conflict' || state.mode === 'external_image' ? 'Внешний процесс' : 'На связи'); $('memory').textContent = `Свободно ${bytes(state.system.free_bytes)} · swap ${bytes(state.system.swap_used_bytes)} · memory pressure ${state.system.pressure_free_percent ?? '—'}%`; renderModels(); updateControls(); if (state.job?.state === 'done' && displayedImage !== state.job.id && current()?.kind === 'image') {await loadGallery();renderConversation();} if (state.runtime?.state === 'failed' && state.runtime?.error && selected === activeModel()) notice(state.runtime.error); }
   catch (error) { $('connection').textContent = 'Нет связи'; notice(error.message); }
+  finally {statusRefreshing=false;}
 }
 async function action(path, body) {
-  working = true; updateControls(); notice(path === '/api/models/start' ? 'Запускается модель…' : path === '/api/mode' ? 'Выгружается модель…' : path === '/api/image/jobs' ? 'Запускается генерация…' : 'Выполняется действие…');
+  $('model-controls').open=false;working = true; updateControls(); notice(path === '/api/models/start' ? 'Запускается модель…' : path === '/api/mode' ? 'Выгружается модель…' : path === '/api/image/jobs' ? 'Запускается генерация…' : 'Выполняется действие…');
   try { await api(path, 'POST', body); notice(''); await refresh(); await refreshProgress(); }
   catch (error) { notice(error.message); }
   finally { working = false; updateControls(); }
 }
+$('catalog-toggle').onclick=()=>{const open=$('catalog-toggle').getAttribute('aria-expanded')!=='true';$('catalog-toggle').setAttribute('aria-expanded',String(open));document.querySelector('.workspace>aside').classList.toggle('models-visible',open);};
 $('scan').onclick = scan; $('search').oninput = renderModels;
 $('start').onclick = () => action('/api/models/start', {model: selected, backend: $('backend').value});
 $('stop').onclick = () => action('/api/mode', {mode:'idle'});
 $('cancel').onclick = () => action('/api/image/cancel', {});
-async function startNewChat() {if(working)return; const old=currentRecord();if(old.value.messages.length)await persist(old).catch(()=>{}); const record=newConversation();sessions.delete(selected);await persist(record).catch(()=>{});renderHistory();renderConversation();notice('');}
+async function startNewChat() {if(working)return; const old=currentRecord();if(old.value.messages.length)await persist(old).catch(()=>{}); const record=newConversation();sessions.delete(selected);await persist(record).catch(()=>{});renderHistory();renderConversation();updateControls();$('prompt').focus();notice('');}
 $('new-chat').onclick=startNewChat;
-$('chat-history').onchange=async()=>{const id=$('chat-history').value;try{if(!records.has(id)){const entry=await api('/api/workspace/entry?id='+encodeURIComponent(id));records.set(id,{...entry,kind:'chat'})}chats.set(selected,id);sessions.delete(selected);renderConversation();if(records.get(id).value.status==='streaming')notice('Предыдущий ответ был прерван. Сохранён полученный текст.');else notice('');}catch(error){notice(error.message)}};
+$('chat-history').onchange=async()=>{const id=$('chat-history').value;if(!id || working)return;try{if(!records.has(id)){const entry=await api('/api/workspace/entry?id='+encodeURIComponent(id));records.set(id,{...entry,kind:'chat'})}const record=records.get(id);ensureHistoryModel(record);chats.set(record.model,id);sessions.delete(record.model);await choose(record.model);if(record.value.status==='streaming')notice('Предыдущий ответ был прерван. Сохранён полученный текст.');else notice('');}catch(error){notice(error.message)}};
 $('retry-save').onclick=async()=>{for(const record of [...unsaved.values()])await persist(record).catch(()=>{});};
 $('cancel-chat').onclick=async()=>{
   const request_id=chatRequest;
   controller?.abort();
   if(request_id)try{await api('/api/chat/cancel','POST',{request_id});}catch(error){notice('Не удалось подтвердить остановку модели: '+error.message);}
 };
-for(const id of [...draftFields,'auto-enhance'])$(id).addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(()=>{draftTimer=null;saveDraft().catch(()=>{})},500);updateControls()});
+for(const id of [...draftFields,'auto-enhance','web-search'])$(id).addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(()=>{draftTimer=null;saveDraft().catch(()=>{})},500);updateControls()});
 window.addEventListener('beforeunload',event=>{if(draftTimer || saveCount || unsaved.size || working){event.preventDefault();event.returnValue='';}});
 $('compose').onsubmit = async event => {
   event.preventDefault(); const prompt = $('prompt').value.trim(), model = current();
   if (!prompt || !model || working) return;
   if (model.kind === 'image' && ($('auto-enhance').checked || Number($('series-count').value)>1)) { await startPromptWorkflow(true); return; }
   if (model.kind === 'image') { const [width,height]=$('size').value.split('x').map(Number); await action('/api/image/jobs', {prompt,width,height,steps:Number($('steps').value),seed:Number($('seed').value),cache:$('cache').value,prompt_expansion:drafts.get(selected)?.value.expansion?.prompt===prompt ? {original_prompt:drafts.get(selected).value.expansion.original_prompt,model:drafts.get(selected).value.expansion.model} : undefined}); renderConversation(); return; }
-  const id = selected, record=currentRecord(), history = record.value.messages; if(history.length>=98){notice('Достигнут лимит истории. Создайте новый чат; этот разговор сохранён.');return;} history.push({role:'user', content:prompt}); $('prompt').value=''; working=true; updateControls(); renderConversation(); notice('');
+  const id = selected, record=currentRecord(), history = record.value.messages; if(history.length>=98){notice('Достигнут лимит истории. Создайте новый чат; этот разговор сохранён.');return;} history.push({role:'user', content:prompt}); $('prompt').value=''; resizePrompt(); working=true; chatActivity={id,phase:'Отправляет сообщение…',started:Date.now()}; updateControls(); renderConversation(); $('conversation').scrollTop=$('conversation').scrollHeight; updateLatestButton(); $('prompt').focus(); notice('');
   try {
+    record.value.model_name=model.name;
     if(record.value.title==='Новый чат')record.value.title=Array.from(prompt).slice(0,80).join('');
     await persist(record);await saveDraft();
-    if (state.mode === 'external_chat' && !sessions.has(id)) { const session = await api('/chat_proxy/sessions','POST',{pinned_state:''}); sessions.set(id, session.session_id); }
+    if (state.mode === 'external_chat' && state.external_chat_sessions && !sessions.has(id)) { const session = await api('/api/chat/sessions','POST',{pinned_state:''}); sessions.set(id, session.session_id); }
     const system = $('system-prompt').value.trim(); const original = history.map(m => ({role:m.role,content:m.content}));
-    chatActivity={id,phase:'Обрабатывает промпт…',started:Date.now()}; updateControls();
-    const assistant={role:'assistant',content:'',reasoning:''}; history.push(assistant);record.value.status='streaming';await persist(record);controller=new AbortController();updateControls();
-    await streamReply({messages:system ? [{role:'system',content:system},...original] : original,max_tokens:Number($('max-tokens').value),temperature:Number($('temperature').value),session:sessions.get(id),stream:true}, delta=>{
+    chatActivity={id,phase:$('web-search').checked ? 'Ищет в интернете…' : 'Обрабатывает промпт…',started:Date.now()}; updateControls();
+    const assistant={role:'assistant',content:'',reasoning:''}; history.push(assistant);renderConversation();record.value.status='streaming';await persist(record);controller=new AbortController();updateControls();
+    await streamReply({messages:system ? [{role:'system',content:system},...original] : original,max_tokens:Number($('max-tokens').value),temperature:Number($('temperature').value),session:sessions.get(id),stream:true,web_search:$('web-search').checked}, delta=>{
       if(!chatSaveTimer)chatSaveTimer=setTimeout(()=>{chatSaveTimer=null;persist(record).catch(()=>{})},500);
       const reasoning=delta.reasoning_content || delta.reasoning;
       if(reasoning) assistant.reasoning+=reasoning;
@@ -323,10 +403,15 @@ $('compose').onsubmit = async event => {
       if((thinking && thinking[2] == null) || (reasoning && !delta.content)) chatActivity.phase='Думает…';
       else if(delta.content) chatActivity.phase='Отвечает…';
       if(selected===id) {
-        if(thinking) {const saved=assistant.content; assistant.reasoning=thinking[1]; assistant.content=thinking[2] || ''; renderConversation(); assistant.content=saved;}
-        else renderConversation();
-        $('conversation').scrollTop=$('conversation').scrollHeight; updateControls();
+        if(thinking) {assistant.reasoning=thinking[1];updateStreamingMessage(history.length-1,assistant);}
+        else updateStreamingMessage(history.length-1,assistant);
+        updateControls();
       }
+    }, meta=>{
+      if(meta.type!=='web_search')return;
+      if(meta.phase==='ready') {assistant.web_search=meta;chatActivity.phase='Читает найденные выдержки…';persist(record).catch(()=>{});}
+      else chatActivity.phase='Ищет в интернете…';
+      if(selected===id){renderConversation();updateControls();}
     });
     const thinking=assistant.content.match(/^\s*<think>([\s\S]*?)<\/think>([\s\S]*)$/);
     if(thinking) {assistant.reasoning=thinking[1]; assistant.content=thinking[2].trim();}
@@ -337,7 +422,7 @@ $('compose').onsubmit = async event => {
     const last=history.at(-1);
     if(error.name==='AbortError')error=new Error('Остановлено пользователем');
     if(last?.role==='assistant' && (last.content || last.reasoning)) notice('Ответ прерван: '+error.message);
-    else {if(last?.role==='assistant')history.pop(); history.pop(); if(selected===id)$('prompt').value=prompt; notice(error.message);}
+    else {if(last?.role==='assistant')history.pop(); history.pop(); if(selected===id){const pending=$('prompt').value;$('prompt').value=prompt+(pending ? '\n\n'+pending : '');resizePrompt();} notice(error.message+' Сообщение возвращено в поле ввода.');}
   }
   finally {clearTimeout(chatSaveTimer);chatSaveTimer=null;controller=null;chatRequest=null;await persist(record).catch(()=>{});await saveDraft().catch(()=>{});chatActivity=null; working=false; if (selected===id) renderConversation(); await refresh(); updateControls(); }
 };
@@ -398,10 +483,10 @@ $('prompt-model').onchange=()=>{$('prompt-model').dataset.chosen=$('prompt-model
 $('enhance').onclick=()=>startPromptWorkflow(false);
 $('cancel-prompt').onclick=async()=>{try{promptJob=await api('/api/prompt/cancel','POST',{});updateControls()}catch(error){notice(error.message)}};
 $('restore-idea').onclick=()=>{const value=drafts.get(selected)?.value.expansion;if(value){$('prompt').value=value.original_prompt;saveDraft().catch(()=>{});notice('Исходный замысел восстановлен.')}};
-async function streamReply(body,onDelta) {
+async function streamReply(body,onDelta,onMeta=()=>{}) {
   chatRequest=crypto.randomUUID();
   body={...body,request_id:chatRequest};
-  const response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:typeof controller!=='undefined'?controller?.signal:undefined});
+  const response=await fetch(managerURL('/api/chat'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:typeof controller!=='undefined'?controller?.signal:undefined});
   if(!response.ok) {const error=await response.json(); throw Error(error.error || response.statusText);}
   const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer='', done=false;
   function frame(text) {
@@ -409,6 +494,7 @@ async function streamReply(body,onDelta) {
     if(!data)return;
     if(data==='[DONE]'){done=true;return;}
     const chunk=JSON.parse(data); if(chunk.error)throw Error(typeof chunk.error==='string'?chunk.error:chunk.error.message || 'Ошибка модели');
+    if(chunk.type==='web_search'){onMeta(chunk);return;}
     const choice=chunk.choices?.[0]; if(choice?.delta)onDelta(choice.delta);
     if(choice?.finish_reason)done=true;
   }
@@ -421,9 +507,15 @@ async function streamReply(body,onDelta) {
     if(!done)throw Error('Соединение закрыто до завершения ответа');
   } finally {await reader.cancel().catch(()=>{}); reader.releaseLock();}
 }
-$('prompt').onkeydown = event => {if ((event.ctrlKey || event.metaKey) && event.key==='Enter' && !$('send').disabled) {event.preventDefault(); $('compose').requestSubmit();}};
+$('prompt').onkeydown = event => {
+  if(event.key!=='Enter' || event.isComposing || event.shiftKey || event.altKey)return;
+  const textChat=current()?.kind!=='image';
+  if(!textChat && !event.ctrlKey && !event.metaKey)return;
+  event.preventDefault();
+  if(!$('send').disabled)$('compose').requestSubmit();
+};
 $('load-logs').onclick = async () => {try {$('logs').textContent=(await api('/api/logs?service='+$('log-service').value)).text || 'Лог пуст';}catch(error){notice(error.message)}};
-(async()=>{try{await loadWorkspace();await loadGallery();await refresh();await scan();updateControls();await refreshProgress();await refreshPrompt();}catch(error){notice('Не удалось загрузить историю: '+error.message);$('save-status').textContent='История недоступна';}})(); setInterval(refresh,8000); setInterval(refreshProgress,1000); setInterval(refreshPrompt,1000);
+(async()=>{try{await loadWorkspace();await loadGallery();await scan();updateControls();await refresh();await refreshProgress();await refreshPrompt();}catch(error){notice('Не удалось загрузить историю: '+error.message);$('save-status').textContent='История недоступна';}})(); setInterval(refresh,8000); setInterval(refreshProgress,1000); setInterval(refreshPrompt,1000);
 let deletionPlan = null;
 $('delete-model').onclick = async () => {
   working = true; updateControls(); notice('');
