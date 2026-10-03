@@ -14,7 +14,7 @@ Mac or a factory-reset machine.
 - Started the manager with an empty home/cache/data directory and a separate
   loopback port. The UI opened, reported an empty catalog and free memory, and
   did not launch inference or download weights.
-- Both Python suites passed: 48 manager tests and 57 image-engine tests.
+- Both Python suites passed: 48 manager tests and 59 image-engine tests.
   JavaScript syntax and SSE parser checks passed too. Node is a development-test
   dependency; the browser UI requires no frontend build.
 

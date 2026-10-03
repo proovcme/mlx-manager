@@ -1,6 +1,8 @@
 # Exact conditioning reuse and resident series
 
-The manager enables Qwen 2.1 text-prefix K/V reuse and a fused RoPE kernel for its pinned MFLUX 0.20 / MLX 0.32.2 backend. The prefix is independent of the image denoising timestep. Quantized output projection row counts and the original multiply/add order are retained. Padded prompts and multi-image batches fall back to the original joint forward.
+On the validated Apple M4 GPU with the pinned MLX 0.32.2 backend, the manager enables Qwen 2.1 text-prefix K/V reuse and a fused RoPE kernel for its pinned MFLUX 0.20 / MLX 0.32.2 backend. The prefix is independent of the image denoising timestep. Quantized output projection row counts and the original multiply/add order are retained. Padded prompts and multi-image batches fall back to the original joint forward.
+
+M1 CI found bitwise differences in prefix reuse at later timesteps. Unknown GPU names/architectures and unpinned MLX versions therefore execute the original joint forward automatically, with strict parity tests covering that fallback. This release enables conditioning reuse only for the measured `Apple M4` / `applegpu_g16g` pair; M4 Pro/Max and other chips require their own validation. Resident-series model and exact prompt-embedding reuse remain available independently.
 
 This acceleration changes neither weights, precision, steps, seed nor guidance. It is separate from the optional **Balanced** noise cache, which approximates omitted transformer evaluations and may change images. New manager drafts and API requests default to cache `off`. Saved drafts retain the user's earlier choice.
 
@@ -45,3 +47,5 @@ python -m experiments.check_series_parity --prompt-file experiments/prompts/teap
 The commands use the published neutral [teapot prompt](../image-kit/experiments/prompts/teapot.txt), matching the 207-token measurements. Omitting `--prompt-file` uses a shorter built-in prompt and will yield different timings. Outputs and raw reports remain under ignored `local/`.
 
 For a baseline or troubleshooting, set `MLX_MANAGER_IMAGE_ACCELERATION=false` before starting the manager. Resident-series reuse remains independent of that setting.
+
+Benchmark commands read the manager's ignored local configuration and environment for cache, lock and port locations. `--manager-url` and `--lock-path` provide explicit overrides. They require existing local weights and do not download models.
