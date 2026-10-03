@@ -178,7 +178,7 @@ async function choose(id) {
   $('send').textContent = model?.kind === 'image' ? 'Создать изображение' : 'Отправить';
   $('prompt').placeholder = model?.kind === 'image' ? 'Опишите изображение…' : 'Сообщение модели…';
   const value=drafts.get(id)?.value || {};
-  const defaults={prompt:'','system-prompt':'','max-tokens':'2048',temperature:'0.7',size:'1152x768',steps:'20',seed:'1977',cache:'balanced',backend:'auto','series-count':'1','prompt-model':$('prompt-model').value};
+  const defaults={prompt:'','system-prompt':'','max-tokens':'2048',temperature:'0.7',size:'1152x768',steps:'20',seed:'1977',cache:'off',backend:'auto','series-count':'1','prompt-model':$('prompt-model').value};
   for(const key of Object.keys(defaults))$(key).value=value[key] ?? defaults[key];
   $('prompt-model').dataset.chosen=$('prompt-model').value;
   $('auto-enhance').checked=value['auto-enhance'] === true;

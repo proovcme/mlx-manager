@@ -1,0 +1,112 @@
+{
+  "scope": "warm denoising only; excludes text encoding, model loading and VAE",
+  "shape": [
+    512,
+    512
+  ],
+  "steps": 6,
+  "seed": 1977,
+  "tokens": 207,
+  "reps": 3,
+  "warmup_per_mode": 1,
+  "mlx": "0.32.2",
+  "snapshot_revision": "4db4e8c0c0e7a1debf0320415bec8388e888494c",
+  "results": {
+    "off": {
+      "vanilla": {
+        "runs": [
+          {
+            "seconds": 36.664132249949034,
+            "peak_mlx_gib": 4.545374255627394,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "latent_file": "off-vanilla-0.npz",
+            "decode_seconds": 2.428800333000254,
+            "pixels_bit_exact": true
+          },
+          {
+            "seconds": 36.63099608395714,
+            "peak_mlx_gib": 4.545374255627394,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "latent_file": "off-vanilla-1.npz",
+            "decode_seconds": 1.825641916017048,
+            "pixels_bit_exact": true
+          },
+          {
+            "seconds": 36.35947141703218,
+            "peak_mlx_gib": 4.545374255627394,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "latent_file": "off-vanilla-2.npz",
+            "decode_seconds": 1.7821574169793166,
+            "pixels_bit_exact": true
+          }
+        ],
+        "median_seconds": 36.63099608395714,
+        "speedup": 1.0
+      },
+      "prefix-rope": {
+        "runs": [
+          {
+            "seconds": 30.525258417008445,
+            "peak_mlx_gib": 4.815851550549269,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "prefix_captures": 1,
+            "prefix_reuses": 5,
+            "fallbacks": 0,
+            "latent_file": "off-prefix-rope-0.npz",
+            "decode_seconds": 1.7899827089859173,
+            "pixels_bit_exact": true
+          },
+          {
+            "seconds": 30.474639958003536,
+            "peak_mlx_gib": 4.816095694899559,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "prefix_captures": 1,
+            "prefix_reuses": 5,
+            "fallbacks": 0,
+            "latent_file": "off-prefix-rope-1.npz",
+            "decode_seconds": 1.7861236660392024,
+            "pixels_bit_exact": true
+          },
+          {
+            "seconds": 30.407098624971695,
+            "peak_mlx_gib": 4.816095694899559,
+            "transformer_forwards": 6,
+            "noise_cache_skips": 0,
+            "bit_exact": true,
+            "max_abs_error": 0.0,
+            "relative_l1": 0.0,
+            "prefix_captures": 1,
+            "prefix_reuses": 5,
+            "fallbacks": 0,
+            "latent_file": "off-prefix-rope-2.npz",
+            "decode_seconds": 1.757769041985739,
+            "pixels_bit_exact": true
+          }
+        ],
+        "median_seconds": 30.474639958003536,
+        "speedup": 1.2020157132106417
+      }
+    }
+  },
+  "encoder_load_and_encoding_seconds": 2.3070497500011697
+}

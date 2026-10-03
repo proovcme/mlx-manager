@@ -27,6 +27,7 @@ class PromptTests(unittest.TestCase):
         manager = SimpleNamespace(_mu=threading.RLock(), _mode='model', _worker=None)
         manager._runtime = SimpleNamespace(status=lambda: {'state':'ready'})
         manager.start_model = Mock()
+        manager.close_image_session = Mock()
         manager.set_mode = Mock()
         def stream(spec):
             yield b'data: {"choices":[{"delta":{"content":"A cat in soft window light."}}]}\n'
@@ -55,11 +56,22 @@ class PromptTests(unittest.TestCase):
             enhancer.run('text','mlx',dict(width=512,height=512,steps=1,seed=2**32-1,cache='off'))
             self.assertEqual(enhancer.job['state'],'done')
             self.assertEqual(enhancer.job['completed'],3)
+            self.assertIsNone(enhancer.job['error'])
+            manager.close_image_session.assert_called_once()
+            self.assertTrue(all(c['_session'] for c in calls))
             self.assertEqual([c['seed'] for c in calls],[2**32-1,0,1])
             self.assertTrue(all(c['prompt']=='A cat in soft window light.' for c in calls))
             self.assertEqual(calls[0]['prompt_expansion']['original_prompt'],'нарисуй котика')
             manager.start_model.assert_called_once()
             self.assertEqual(enhancer.path.stat().st_mode & 0o777,0o600)
+
+    def test_unload_failure_is_visible_and_never_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as folder:
+            manager, enhancer, calls = self.fixture(folder, expand=False)
+            manager.close_image_session.side_effect = RuntimeError('worker did not exit')
+            enhancer.run(None, None, dict(width=512,height=512,steps=1,seed=42,cache='off'))
+            self.assertEqual(enhancer.job['state'],'failed')
+            self.assertIn('worker did not exit',enhancer.job['error'])
 
     def test_failed_expansion_unloads_model_and_never_starts_image(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -54,6 +54,7 @@ class Manager:
         self.store = Store()
         self._job = self._load_job()
         self._worker = None
+        self._session_worker = None
         if self._job and self._job.get('state') == 'running':
             self._worker = ownership.recover(self._job.get('owner'), config.DATA_ROOT / f"image-{self._job['id']}-progress.json")
             if not self._worker:
@@ -510,7 +511,11 @@ class Manager:
             self._reconcile()
             if self._mode != "image" or not self._heavy_held:
                 raise ManagerError("Switch to image mode first")
-            if self._worker and self._worker.poll() is None:
+            persistent = bool(spec.get('_session')) and self._enhancer.owned()
+            reuse = (persistent and self._worker is getattr(self, '_session_worker', None)
+                     and self._worker is not None and self._worker.poll() is None
+                     and self._job and self._job['state'] == 'done')
+            if self._worker and self._worker.poll() is None and not reuse:
                 raise ManagerError("An image job is already running")
             if memory.listener_pid(1919):
                 raise ManagerError("Mara is still running")
@@ -526,7 +531,7 @@ class Manager:
                 raise ManagerError("Prompt must contain 1-4000 characters")
             width, height = spec.get("width", 1024), spec.get("height", 1024)
             steps, seed = spec.get("steps", 30), spec.get("seed", 42)
-            cache = spec.get("cache", "balanced")
+            cache = spec.get("cache", "off")
             if (not all(isinstance(x, int) and not isinstance(x, bool) for x in
                         (width, height, steps, seed)) or
                 width not in (512, 768, 1024, 1152) or height not in (512, 768, 1024, 1152) or
@@ -540,17 +545,24 @@ class Manager:
                        "height": height, "steps": steps, "seed": seed,
                        "cache": cache, "model_path": str(snapshot)}
             payload["progress"] = str(config.DATA_ROOT / f"image-{job_id}-progress.json")
+            payload.update(session=persistent, acceleration=config.IMAGE_ACCELERATION)
             env = dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
-            with open(log_path, "w", encoding="utf-8") as log:
-                worker = subprocess.Popen([str(config.IMAGE_PYTHON),
-                                           str(config.ROOT / "image_worker.py")],
-                                          stdin=subprocess.PIPE, stdout=log,
-                                          stderr=subprocess.STDOUT, text=True,
-                                          env=env, start_new_session=True)
-            self._worker = worker
+            if reuse:
+                worker = self._worker
+                log_path = Path(self._job['log'])
+            else:
+                with open(log_path, "w", encoding="utf-8") as log:
+                    worker = subprocess.Popen([str(config.IMAGE_PYTHON),
+                                               str(config.ROOT / "image_worker.py")],
+                                              stdin=subprocess.PIPE, stdout=log,
+                                              stderr=subprocess.STDOUT, text=True,
+                                              env=env, start_new_session=True)
+                self._worker = worker
+                if persistent:
+                    self._session_worker = worker
             self._job = {"id": job_id, "state": "running", "started_at": now(),
                          "steps": steps, "owner": ownership.record(worker),
-                         "parameters": {k: payload[k] for k in ("prompt","width","height","steps","seed","cache")},
+                         "parameters": {k: payload[k] for k in ("prompt","width","height","steps","seed","cache","acceleration")},
                          "finished_at": None, "output": str(output),
                          "log": str(log_path), "exit_code": None,
                          "peak_footprint_bytes": None, "cancel_reason": None,
@@ -571,16 +583,26 @@ class Manager:
             self._save_job()
             assert worker.stdin is not None
             try:
-                worker.stdin.write(json.dumps(payload))
-                worker.stdin.close()
+                worker.stdin.write(json.dumps(payload) + '\n')
+                worker.stdin.flush()
+                if not persistent:
+                    worker.stdin.close()
             except OSError:
                 self._job["state"] = "failed"
             self._save_job()
-            threading.Thread(target=self._watch_job, args=(worker,), daemon=True).start()
+            threading.Thread(target=self._watch_job, args=(worker, job_id, persistent), daemon=True).start()
             return dict(self._job)
 
-    def _watch_job(self, worker: subprocess.Popen) -> None:
+    def _watch_job(self, worker: subprocess.Popen, job_id=None, persistent=False) -> None:
+        terminal = None
         while worker.poll() is None:
+            if persistent:
+                try:
+                    terminal = json.loads((config.DATA_ROOT / f'image-{job_id}-progress.json').read_text()).get('stage')
+                except (OSError,ValueError):
+                    terminal = None
+                if terminal in ('done','failed','cancelled'):
+                    break
             footprint = memory.vmmap_summary(worker.pid)["footprint_bytes"]
             pressure = memory.system_memory()["pressure_free_percent"]
             with self._mu:
@@ -590,11 +612,11 @@ class Manager:
                 if self._job and self._worker is worker and pressure is not None:
                     old = self._job["min_pressure_free_percent"]
                     self._job["min_pressure_free_percent"] = min(old, pressure)
-            time.sleep(5)
-        code = worker.wait()
+            time.sleep(.5 if persistent else 5)
+        code = (0 if terminal == 'done' else 130 if terminal == 'cancelled' else 1) if persistent and terminal else worker.wait()
         swap_after = memory.system_memory()["swap_used_bytes"]
         with self._mu:
-            if self._job and self._worker is worker:
+            if self._job and self._worker is worker and (job_id is None or self._job['id'] == job_id):
                 self._job["exit_code"] = code
                 self._job["finished_at"] = now()
                 self._job["swap_after_bytes"] = swap_after
@@ -603,6 +625,25 @@ class Manager:
                                       else "cancelled" if self._job["cancel_reason"] or code == 130
                                       else "failed")
                 self._save_job()
+                if not persistent or worker.poll() is not None:
+                    self._worker = None
+
+    def close_image_session(self):
+        with self._mu:
+            self._prompt_guard()
+            worker = self._session_worker
+            if worker is None:
+                return
+            self._session_worker = None
+            if worker.stdin and not worker.stdin.closed:
+                worker.stdin.close()
+        try:
+            worker.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self._interrupt_worker(worker)
+            worker.wait(timeout=10)
+        with self._mu:
+            if self._worker is worker:
                 self._worker = None
 
     def _interrupt_worker(self, worker: subprocess.Popen) -> None:

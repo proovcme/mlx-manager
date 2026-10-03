@@ -289,6 +289,7 @@ def run_jobs(
     cache_config: CacheConfig | None = None,
     progress: bool = True,
     show_library_progress: bool = True,
+    acceleration: bool = False,
 ) -> Summary:
     """Run sequential jobs with one load of each heavy model and disk-spilled intermediates."""
     summary = Summary(total=len(jobs))
@@ -384,6 +385,9 @@ def run_jobs(
             if progress:
                 print("Loading transformer...")
             tr = _load_transformer(snapshot)
+            if acceleration:
+                from mlx_image.accelerate import ConditionedTransformer
+                tr = ConditionedTransformer(tr)
             if on_stage_event:
                 on_stage_event("transformer_ready", None)
             if progress:
@@ -410,6 +414,8 @@ def run_jobs(
                             elif step == total:
                                 print(line)
 
+                        if acceleration:
+                            tr.reset()
                         began_denoise = time.monotonic()
                         if on_stage_event:
                             on_stage_event("denoising_start", state.job.index)

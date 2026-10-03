@@ -23,7 +23,7 @@ class Recorder:
 
     def event(self, name, index):
         stages = {"model_ready": "loading_encoder", "text_encoder_ready": "encoding",
-                  "prompt_encoded": "loading_transformer", "transformer_ready": "denoising",
+                  "prompt_encoded": "loading_transformer", "prompt_reused": "loading_transformer", "transformer_ready": "denoising",
                   "denoising_start": "denoising", "vae_ready": "decoding", "decoding_start": "decoding"}
         self.data["stage"] = stages.get(name, self.data["stage"])
         self.write()

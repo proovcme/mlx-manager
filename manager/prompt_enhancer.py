@@ -97,7 +97,7 @@ class PromptEnhancer:
         if not isinstance(image, dict):
             raise ValueError('Invalid image settings')
         image = {key: image.get(key, default) for key, default in
-                 [('width',1152),('height',768),('steps',20),('seed',1977),('cache','balanced')]}
+                 [('width',1152),('height',768),('steps',20),('seed',1977),('cache','off')]}
         if (any(not isinstance(image[k], int) or isinstance(image[k], bool) for k in ('width','height','steps','seed'))
                 or image['width'] not in (512,768,1024,1152) or image['height'] not in (512,768,1024,1152)
                 or not 1 <= image['steps'] <= 60 or not 0 <= image['seed'] <= 2**32-1
@@ -138,7 +138,7 @@ class PromptEnhancer:
             self.check()
             if not self.job["expand"]:
                 self.render_series(self.job["original_prompt"], image)
-                self.update(state="done", stage="done", finished_at=time.time())
+                terminal = dict(state='done',stage='done',finished_at=time.time())
                 return
             self.manager.start_model(model_id, backend)
             started_model = True
@@ -191,7 +191,7 @@ class PromptEnhancer:
             self.check()
             if self.job['generate']:
                 self.render_series(result, image)
-            self.update(state='done', stage='done', finished_at=time.time())
+            terminal = dict(state='done',stage='done',finished_at=time.time())
         except Cancelled:
             terminal = dict(state='cancelled', stage='cancelled', finished_at=time.time())
         except Exception as exc:
@@ -203,9 +203,17 @@ class PromptEnhancer:
                     self.manager.set_mode('idle')
                 except Exception as exc:
                     if terminal is None:
-                        terminal = dict(state='failed', stage='failed', finished_at=time.time())
+                        terminal = {}
+                    terminal.update(state='failed', stage='failed', finished_at=time.time())
                     terminal['error'] = (terminal.get('error') or '') + '; unload: ' + str(exc)
 
+            try:
+                self.manager.close_image_session()
+            except Exception as exc:
+                if terminal is None:
+                    terminal = {}
+                terminal.update(state='failed', stage='failed', finished_at=time.time())
+                terminal['error'] = (terminal.get('error') or '') + '; image unload: ' + str(exc)
             if terminal:
                 self.update(**terminal)
 
@@ -216,7 +224,7 @@ class PromptEnhancer:
         for index in range(self.job['count']):
             self.check()
             self.update(index=index + 1)
-            spec = dict(image, prompt=prompt, seed=(image['seed'] + index) % 2**32)
+            spec = dict(image, prompt=prompt, seed=(image['seed'] + index) % 2**32, _session=self.job['count'] > 1)
             spec['series'] = dict(id=self.job['id'], index=index + 1, count=self.job['count'])
             if self.job['expand']:
                 spec['prompt_expansion'] = dict(original_prompt=self.job['original_prompt'], model=self.job['model_name'])
