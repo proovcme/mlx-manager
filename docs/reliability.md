@@ -14,7 +14,7 @@ Mac or a factory-reset machine.
 - Started the manager with an empty home/cache/data directory and a separate
   loopback port. The UI opened, reported an empty catalog and free memory, and
   did not launch inference or download weights.
-- Both Python suites passed: 48 manager tests and 59 image-engine tests.
+- The initial installation check passed 48 manager tests and 57 image-engine tests.
   JavaScript syntax and SSE parser checks passed too. Node is a development-test
   dependency; the browser UI requires no frontend build.
 
@@ -59,3 +59,19 @@ from these lifecycle tests.
 ## Web-search validation
 
 The optional search feature adds ten manager tests, bringing that suite to 58. Tests cover provider failure without a fabricated answer, unsafe source URLs, preserved history turns, worker cancellation and deadlines, streaming metadata and non-streaming responses. SSE parser checks cover search metadata as well as byte fragmentation and UTF-8. A live query returned five sources and a completed local-model answer with numbered references. An isolated UI replay of that live trace verified clickable sources, saved history and toggle restoration after reload.
+
+## Publication gate, 2026-10-04
+
+The current suites pass 68 manager and 59 image-engine tests on the local Apple M4,
+plus JS syntax, SSE parsing, history navigation and streaming-rendering checks.
+A clean source export without private configuration also passed. Delayed metric
+collection and catalog discovery tests verify that chat completion can acquire the
+control lock. A model-free browser fixture checked missing-model history, mobile
+overflow and sequential requests with retained conversation turns. New chat
+screenshots contain neutral fixture data and no EXIF metadata.
+
+GitHub Actions now runs the manager suite on Linux and the image suite on macOS.
+The first M1 run exposed bitwise drift in conditioning reuse. Unvalidated GPUs now
+execute the original joint forward, with strict equality assertions retained.
+Metal tests explicitly skip only when there is no Metal device; local M4 and M1 CI
+otherwise exercise the hardware-specific optimized or original path.
