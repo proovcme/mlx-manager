@@ -221,8 +221,8 @@ function updateControls() {
   $('stop').disabled = working || reserved || runningImage || !activeModel();
   $('send').disabled = !ready || working || reserved || runningImage;
  $('cancel-chat').hidden=!controller; renderHistory(); $('cancel').hidden = !runningImage; $('cancel').disabled = working || Boolean(state?.job?.cancel_reason);
-  $('model-status').textContent = reserved ? 'Сейчас идёт тест оптимизации' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX / ChatProxy' : 'Не запущена';
-  $('compose-hint').textContent = reserved ? 'Тест занимает GPU; запуск доступен после завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : 'Чаты и промпты сохраняются на этом Mac';
+  $('model-status').textContent = reserved ? 'GPU занят другим заданием' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX / ChatProxy' : 'Не запущена';
+  $('compose-hint').textContent = reserved ? 'Другое задание занимает GPU; дождитесь его завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : 'Чаты и промпты сохраняются на этом Mac';
   renderActivity();
 }
 async function scan() {
@@ -230,7 +230,7 @@ async function scan() {
   catch (error) { notice(error.message); }
 }
 async function refresh() {
-  try { state = await api('/api/status'); $('connection').textContent = state.reserved ? 'Тест оптимизации выполняется' : 'Локально · ' + (state.mode === 'idle' ? 'Память свободна' : state.mode === 'conflict' || state.mode === 'external_image' ? 'Внешний процесс' : 'На связи'); $('memory').textContent = `Свободно ${bytes(state.system.free_bytes)} · swap ${bytes(state.system.swap_used_bytes)} · memory pressure ${state.system.pressure_free_percent ?? '—'}%`; renderModels(); updateControls(); if (state.job?.state === 'done' && displayedImage !== state.job.id && current()?.kind === 'image') {await loadGallery();renderConversation();} if (state.runtime?.state === 'failed' && state.runtime?.error && selected === activeModel()) notice(state.runtime.error); }
+  try { state = await api('/api/status'); $('connection').textContent = state.reserved ? 'GPU занят другим заданием' : 'Локально · ' + (state.mode === 'idle' ? 'Память свободна' : state.mode === 'conflict' || state.mode === 'external_image' ? 'Внешний процесс' : 'На связи'); $('memory').textContent = `Свободно ${bytes(state.system.free_bytes)} · swap ${bytes(state.system.swap_used_bytes)} · memory pressure ${state.system.pressure_free_percent ?? '—'}%`; renderModels(); updateControls(); if (state.job?.state === 'done' && displayedImage !== state.job.id && current()?.kind === 'image') {await loadGallery();renderConversation();} if (state.runtime?.state === 'failed' && state.runtime?.error && selected === activeModel()) notice(state.runtime.error); }
   catch (error) { $('connection').textContent = 'Нет связи'; notice(error.message); }
 }
 async function action(path, body) {
@@ -256,7 +256,7 @@ $('compose').onsubmit = async event => {
   if (model.kind === 'image') { const [width,height]=$('size').value.split('x').map(Number); await action('/api/image/jobs', {prompt,width,height,steps:Number($('steps').value),seed:Number($('seed').value),cache:$('cache').value}); renderConversation(); return; }
   const id = selected, record=currentRecord(), history = record.value.messages; if(history.length>=98){notice('Достигнут лимит истории. Создайте новый чат; этот разговор сохранён.');return;} history.push({role:'user', content:prompt}); $('prompt').value=''; working=true; updateControls(); renderConversation(); notice('');
   try {
-    if(record.value.title==='Новый чат')record.value.title=prompt.slice(0,80);
+    if(record.value.title==='Новый чат')record.value.title=Array.from(prompt).slice(0,80).join('');
     await persist(record);await saveDraft();
     if (state.mode === 'external_chat' && !sessions.has(id)) { const session = await api('/chat_proxy/sessions','POST',{pinned_state:''}); sessions.set(id, session.session_id); }
     const system = $('system-prompt').value.trim(); const original = history.map(m => ({role:m.role,content:m.content}));
