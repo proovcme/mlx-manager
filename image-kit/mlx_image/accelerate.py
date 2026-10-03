@@ -4,6 +4,8 @@ Retains the original quantized projection shapes and arithmetic order. Padding
 and multi-image batches fall back to the original joint transformer path.
 """
 
+from importlib.metadata import version, PackageNotFoundError
+
 import mlx.core as mx
 from mlx import nn
 from mlx.core.fast import scaled_dot_product_attention as sdpa
@@ -57,6 +59,11 @@ def exact_conditioning_supported():
     different reductions on another GPU. Unknown devices keep the joint path.
     """
     if mx.default_device() != mx.gpu or mx.__version__ != '0.32.2':
+        return False
+    try:
+        if version('mflux') != '0.20.0':
+            return False
+    except PackageNotFoundError:
         return False
     info = mx.device_info()
     return info.get('device_name') == 'Apple M4' and info.get('architecture') == 'applegpu_g16g'

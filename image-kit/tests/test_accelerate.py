@@ -36,6 +36,8 @@ class FusedRopeTests(unittest.TestCase):
                 self.assertEqual(accelerate.exact_conditioning_supported(),expected)
         with patch.object(mx,'default_device',return_value=mx.cpu):
             self.assertFalse(accelerate.exact_conditioning_supported())
+        with patch.object(accelerate,'version',return_value='unknown'):
+            self.assertFalse(accelerate.exact_conditioning_supported())
         with patch.object(mx,'__version__','unknown'):
             self.assertFalse(accelerate.exact_conditioning_supported())
 
