@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLX Manager</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<body>
+<main class="workspace">
+  <aside>
+    <header class="brand"><h1>MLX Manager</h1><button id="scan" class="quiet" title="Обновить локальный каталог" aria-label="Обновить каталог">↻</button></header>
+    <div id="engines" class="caption">Поиск движков…</div>
+    <input id="search" type="search" placeholder="Найти модель" aria-label="Поиск модели">
+    <div id="models" class="model-list" aria-label="Локальные модели"></div>
+    <details class="sidebar-details"><summary>Где ищем</summary><div id="roots" class="caption paths"></div></details>
+  </aside>
+  <section class="workbench">
+    <header class="toolbar"><div class="identity"><h2 id="model-name">Выберите модель</h2><span id="model-status" class="caption">Локально на этом Mac</span></div><div class="toolbar-actions"><select id="backend" aria-label="Движок"><option value="auto">Авто</option></select><button id="start" class="primary" disabled>Запустить</button><button id="stop" class="quiet">Выгрузить</button><button id="delete-model" class="danger" disabled>Удалить</button></div></header>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <div class="history-bar"><select id="chat-history" aria-label="История чатов"></select><button id="new-chat" class="quiet" type="button">Новый чат</button><span id="save-status" class="caption" role="status">Загрузка истории…</span><button id="retry-save" class="quiet" type="button" hidden>Сохранить снова</button></div>
+    <div id="activity" class="activity" role="status" aria-live="polite" hidden><div class="activity-line"><strong id="activity-stage"></strong><span id="activity-time" class="caption"></span></div><progress id="activity-progress" max="100"></progress><div id="activity-detail" class="caption"></div></div>
+    <div id="conversation" class="conversation" aria-live="polite"><div class="empty"><div class="empty-title">Модель → запуск → промпт</div><p>Выберите локальную модель слева.<br>Чат и изображения работают в одном окне.</p></div></div>
+    <form id="compose" class="composer">
+      <details id="chat-options"><summary>Системный промпт и параметры</summary><label for="system-prompt">Системный промпт</label><textarea id="system-prompt" rows="3" placeholder="Как модель должна отвечать"></textarea><div class="settings-row"><label>Ответ, токены <input id="max-tokens" type="number" min="1" max="8192" value="2048"></label><label>Температура <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.7"></label></div></details>
+      <div id="image-options" class="settings-row" hidden><label>Размер <select id="size"><option value="1152x768">1152 × 768</option><option value="768x1152">768 × 1152</option><option value="1024x1024">1024 × 1024</option><option value="512x512">512 × 512</option></select></label><label>Шаги <input id="steps" type="number" min="1" max="60" value="20"></label><label>Seed <input id="seed" type="number" min="0" max="4294967295" value="1977"></label><label>Кеш <select id="cache"><option value="balanced">Balanced</option><option value="off">Без кеша</option></select></label></div>
+      <label class="sr-only" for="prompt">Промпт</label><textarea id="prompt" rows="3" placeholder="Сообщение или промпт для изображения…" required></textarea>
+      <div class="compose-footer"><span id="compose-hint" class="caption">Чаты и промпты сохраняются на этом Mac</span><button id="cancel-chat" type="button" class="quiet" hidden>Прервать ответ</button><button id="cancel" type="button" class="quiet" hidden>Отменить</button><button id="send" class="primary" disabled>Отправить</button></div>
+    </form>
+    <footer><span id="connection" class="caption">Подключение…</span><details id="diagnostics"><summary>Память и логи</summary><div id="memory" class="caption"></div><div class="log-controls"><select id="log-service" aria-label="Логи"><option value="model">Выбранная модель</option><option value="external_chat">ExternalChat</option><option value="image">Изображения</option><option value="manager">Менеджер</option></select><button id="load-logs" class="quiet">Показать</button></div><pre id="logs"></pre></details></footer>
+  </section>
+</main>
+<dialog id="delete-dialog" aria-labelledby="delete-title"><form id="delete-form"><h2 id="delete-title">Удалить модель?</h2><p>Папка модели будет перемещена в корзину. Для восстановления верните её по исходному пути.</p><div id="delete-target" class="paths"></div><p id="delete-snapshots" class="caption"></p><label for="delete-confirm">Введите имя модели для подтверждения</label><input id="delete-confirm" autocomplete="off" spellcheck="false" required><div class="dialog-actions"><button id="delete-close" type="button" class="quiet">Отмена</button><button id="delete-confirm-button" type="submit" class="danger" disabled>Переместить в корзину</button></div></form></dialog>
+</body></html>
