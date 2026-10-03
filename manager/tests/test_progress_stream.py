@@ -4,7 +4,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, ANY
 
 import core
 from progress import Recorder, from_log
@@ -51,7 +51,7 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(manager._active_chat, 1)
         stream.close()
         self.assertEqual(manager._active_chat, 0)
-        manager._runtime.open_chat.assert_called_once_with([{"role": "user", "content": "test"}], 1024, 0.7, stream=True)
+        manager._runtime.open_chat.assert_called_once_with([{"role": "user", "content": "test"}], 1024, 0.7, stream=True, on_socket=ANY)
 
     def test_upstream_error_releases_active_request(self):
         manager = self.manager()

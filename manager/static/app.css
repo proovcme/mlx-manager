@@ -8,3 +8,5 @@
 #prompt-options .settings-row input[type=checkbox]{width:auto;accent-color:var(--action)}#prompt-options select{max-width:260px}#series-count{width:60px!important}#prompt-preview{margin:8px 0 12px}#prompt-result{white-space:pre-wrap;max-height:180px;overflow:auto;color:var(--subtle);font:12px/1.6 inherit}#prompt-original{overflow-wrap:anywhere}
 
 #prompt-preview{padding:12px;background:var(--panel);border:1px solid var(--edge);border-radius:6px}#prompt-result{font-family:inherit;font-size:12px;line-height:1.6}#prompt-preview[open]>summary{margin-bottom:10px}
+
+#series-status{padding:0 14px 10px;font-variant-numeric:tabular-nums}

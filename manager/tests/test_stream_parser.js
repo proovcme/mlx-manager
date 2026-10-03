@@ -7,7 +7,10 @@ const end = source.indexOf("$('prompt').onkeydown", start);
 async function run(wire) {
   const bytes = new TextEncoder().encode(wire);
   const stream = new ReadableStream({start(controller){for(const byte of bytes)controller.enqueue(Uint8Array.of(byte));controller.close();}});
-  const context={fetch:async()=>new Response(stream),TextDecoder,Uint8Array};
+  const context={fetch:async(path,options)=>{
+    assert.match(JSON.parse(options.body).request_id,/^[0-9a-f-]{36}$/);
+    return new Response(stream);
+  },TextDecoder,Uint8Array,crypto:require('node:crypto').webcrypto};
   vm.createContext(context); vm.runInContext(source.slice(start,end), context);
   const deltas=[];
   await context.streamReply({}, delta=>deltas.push(delta));

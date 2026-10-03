@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 import sys
 import sqlite3
+import select
+import socket
+import threading
+import uuid
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -182,6 +186,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._stream_chat(spec)
                 else:
                     self._json(200, MANAGER.chat(spec))
+            elif path == '/api/chat/cancel':
+                request_id = self._body().get('request_id')
+                if not isinstance(request_id, str) or not 1 <= len(request_id) <= 100:
+                    raise ValueError('Invalid chat request identifier')
+                self._json(200, MANAGER.cancel_chat(request_id))
             elif path == "/api/image/jobs":
                 self._json(202, MANAGER.generate(self._body()))
             elif path == "/api/image/cancel":
@@ -203,6 +212,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, {"error": str(exc)})
 
     def _stream_chat(self, spec):
+        spec = dict(spec, request_id=spec.get('request_id') or uuid.uuid4().hex)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -210,6 +220,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
         stream = MANAGER.stream_chat(spec)
+        finished = threading.Event()
+        def watch_disconnect():
+            while not finished.wait(.25):
+                try:
+                    readable, _, _ = select.select([self.connection], [], [], 0)
+                    if readable and not self.connection.recv(1, socket.MSG_PEEK):
+                        MANAGER.cancel_chat(spec['request_id'])
+                        return
+                except OSError:
+                    if not finished.is_set():
+                        MANAGER.cancel_chat(spec['request_id'])
+                    return
+        threading.Thread(target=watch_disconnect, daemon=True).start()
         try:
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
@@ -226,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
         finally:
+            finished.set()
             stream.close()
 
     def _static_output(self, path):
