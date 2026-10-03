@@ -94,11 +94,8 @@ Path overrides also support `MLX_MANAGER_<NAME>` environment variables, such
 as `MLX_MANAGER_DATA_ROOT` and `MLX_MANAGER_IMAGE_ROOT`. Environment values take
 precedence over the local JSON file. `MODEL_ROOTS` is a JSON-only list.
 
-An optional legacy ExternalChat/ChatProxy profile can be configured through `EXTERNAL_CHAT_MODEL`,
-`EXTERNAL_CHAT_LABEL`, `EXTERNAL_CHAT_PLIST`, `EXTERNAL_CHAT_LOG`, `CHAT_PROXY_LABEL` and `CHAT_PROXY_PLIST`.
-Its local ports are 1926 and 1927; the stable proxied routes are `/v1/models`,
-`/v1/chat/completions` and `/chat_proxy/sessions`. This integration is optional:
-ordinary models run through the managed inference server on port 1925.
+Selected text models run through the managed local inference server. It exposes
+the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes.
 
 ## CLI and checks
 
