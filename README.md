@@ -131,10 +131,10 @@ stop the workflow instead of being passed to the image model.
 .venv/bin/python run.py check           # both Python suites + SSE parser
 ```
 
-**125 Python tests** pass across both components (68 manager + 57 image engine),
+**127 Python tests** pass across both components (68 manager + 59 image engine),
 plus JavaScript syntax and SSE parser checks. These checks need the installed
 Image Kit dependencies; they do not download models or run a GPU benchmark.
-[CI](.github/workflows/checks.yml) checks the manager on Linux and image contracts on macOS. Metal parity tests require a GPU; hosted runners without Metal explicitly skip those tests. Local Apple Silicon checks cover all 125 Python tests.
+[CI](.github/workflows/checks.yml) checks the manager on Linux and image contracts on macOS. Metal parity tests require a GPU; hosted runners without Metal explicitly skip those tests. Local Apple Silicon checks cover all 127 Python tests.
 See the [installation and recovery checks](docs/reliability.md) for their scope.
 
 ## Local by design

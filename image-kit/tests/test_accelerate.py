@@ -2,6 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import mlx.core as mx
 from mlx import nn
@@ -11,6 +12,7 @@ if not mx.metal.is_available():
 from mflux.models.qwen21.model.qwen21_transformer.qwen21_attention import Qwen21Attention
 from mflux.models.qwen21.model.qwen21_transformer.qwen21_transformer import Qwen21Transformer
 
+from mlx_image import accelerate
 from mlx_image.accelerate import ConditionedTransformer as ExperimentalTransformer, fused_rope
 
 
@@ -27,6 +29,15 @@ class FusedRopeTests(unittest.TestCase):
                     actual = fused_rope(x, cosine, sine)
                     mx.eval(expected, actual)
                     self.assertTrue(mx.array_equal(actual, expected).item())
+
+    def test_unknown_gpu_or_backend_does_not_enable_conditioning_reuse(self):
+        for name,architecture,expected in [('Apple M4','applegpu_g16g',True),('Apple M1','applegpu_g13g',False),('Apple M4 Pro','applegpu_g16s',False),('Unknown','applegpu_g16g',False)]:
+            with self.subTest(device=name),patch.object(mx,'device_info',return_value={'device_name':name,'architecture':architecture}),patch.object(mx,'default_device',return_value=mx.gpu),patch.object(mx,'__version__','0.32.2'):
+                self.assertEqual(accelerate.exact_conditioning_supported(),expected)
+        with patch.object(mx,'default_device',return_value=mx.cpu):
+            self.assertFalse(accelerate.exact_conditioning_supported())
+        with patch.object(mx,'__version__','unknown'):
+            self.assertFalse(accelerate.exact_conditioning_supported())
 
     def test_invalid_angle_shape_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -59,7 +70,19 @@ class PrefixReuseTests(unittest.TestCase):
                 mx.eval(expected, actual)
                 with self.subTest(mode=mode, t=t):
                     self.assertTrue(mx.array_equal(actual, expected).item())
-            self.assertEqual(wrapper.reuse_count, 0 if mode == "rope" else 2)
+            self.assertEqual(wrapper.reuse_count, 0 if mode == "rope" or not wrapper.reuse_supported else 2)
+
+    def test_unverified_device_returns_original_forward_bit_for_bit(self):
+        with patch.object(accelerate,'exact_conditioning_supported',return_value=False):
+            wrapper=ExperimentalTransformer(self.tr)
+        for t in range(3):
+            expected=self.tr(t,self.config,self.hidden,self.embeds,self.mask)
+            actual=wrapper(t,self.config,self.hidden,self.embeds,self.mask)
+            mx.eval(expected,actual)
+            self.assertTrue(mx.array_equal(actual,expected).item())
+        self.assertEqual(wrapper.fallback_count,3)
+        self.assertEqual(wrapper.capture_count,0)
+        self.assertEqual(wrapper.reuse_count,0)
 
     def test_new_conditioning_and_explicit_reset_clear_prefix(self):
         wrapper = ExperimentalTransformer(self.tr, "prefix")
