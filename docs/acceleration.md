@@ -20,13 +20,28 @@ All measured PNG pixel buffers were identical; the denoising comparison also mat
 
 Raw timing and parity evidence: [denoising](benchmarks/qwen21-conditioning-512.json), [full pipeline](benchmarks/qwen21-pipeline-512.json). Reports omit prompt contents and machine paths.
 
+## Native-size release gate
+
+A separate full-pipeline check at **1152×768, 20 steps, seed 1977, cache off** matched both latent arrays and PNG pixels bit for bit. Each mode was run once with freshly loaded models; no warm-up or repeated median was used. Baseline took **395.64 s**, accelerated **375.87 s** (5.0% less elapsed time in this check). Peak MLX allocation was **17.07 / 17.21 GiB**. These are control-run timings, not a statistically established speedup.
+
+[Native-size parity report](benchmarks/qwen21-production-parity.json).
+
+The resident first image at 20 steps also matched the staged reference PNG. Its peak MLX allocation was **17.17 GiB**. A separate next-image probe at 4 steps, seed 1978, matched the staged PNG byte for byte at the pixel-buffer level; both decodes contained finite values. The reused prompt took less than a microsecond to retrieve and session close released its models. These probes validate native-size conditioning reuse and memory, not the throughput of two complete 20-step images. The resident first image took 400.31 s; the separate 4-step reused/staged probes took 79.42 / 89.93 s. They are single control samples with different warm states, not benchmark medians.
+
+An initial one-step next-image probe emitted a nonfinite-decode warning and was excluded from the quality gate. The follow-up probe used a one-step image only to prepare resident state, then checked finite 4-step outputs against the staged reference. One-step renders should not be used as quality or parity evidence. The default reproducible series check below uses a 20-step first image and a 4-step next image and rejects nonfinite quality-check outputs.
+
+[Native resident-series report](benchmarks/qwen21-production-series.json).
+
+
 To repeat with installed dependencies and local weights, run from `image-kit`:
 
 ```sh
-python -m experiments.benchmark_qwen21 --width 512 --height 512 --steps 6 --reps 3 --modes prefix-rope --cache-modes off --decode --fail-on-drift
-python -m experiments.benchmark_pipeline
+python -m experiments.benchmark_qwen21 --width 512 --height 512 --steps 6 --reps 3 --modes prefix-rope --cache-modes off --decode --fail-on-drift --prompt-file experiments/prompts/teapot.txt
+python -m experiments.benchmark_pipeline --prompt-file experiments/prompts/teapot.txt
+python -m experiments.check_production_parity --prompt-file experiments/prompts/teapot.txt
+python -m experiments.check_series_parity --prompt-file experiments/prompts/teapot.txt
 ```
 
-The example's shorter built-in prompt will yield different timings. Supply the same neutral `--prompt-file` to both commands for matched conditioning. Outputs and raw reports remain under ignored `local/`.
+The commands use the published neutral [teapot prompt](../image-kit/experiments/prompts/teapot.txt), matching the 207-token measurements. Omitting `--prompt-file` uses a shorter built-in prompt and will yield different timings. Outputs and raw reports remain under ignored `local/`.
 
 For a baseline or troubleshooting, set `MLX_MANAGER_IMAGE_ACCELERATION=false` before starting the manager. Resident-series reuse remains independent of that setting.

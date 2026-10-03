@@ -1,0 +1,61 @@
+{
+  "scope": "Separate native-size resident parity and memory probes; not a two-image 20-step timing benchmark",
+  "width": 1152,
+  "height": 768,
+  "cache": "off",
+  "mlx": "0.32.2",
+  "mflux": "0.20.0",
+  "tokens": 207,
+  "prompt_file": "image-kit/experiments/prompts/teapot.txt",
+  "first_image": {
+    "mode": "resident-first",
+    "steps": 20,
+    "seed": 1977,
+    "seconds": 400.3066859160317,
+    "peak_mlx_gib": 17.17046508193016,
+    "stages": {
+      "prompt_encoding": 3.7989317920291796,
+      "transformer_loading": 1.204871500027366,
+      "denoising": 387.7998052079929,
+      "vae_loading": 0.4426380419754423,
+      "vae_decode": 6.835591958020814
+    }
+  },
+  "first_pixels_bit_exact": true,
+  "reuse_probe": [
+    {
+      "mode": "resident-next",
+      "steps": 4,
+      "seed": 1978,
+      "decoded_values_finite": true,
+      "seconds": 79.42488545802189,
+      "peak_mlx_gib": 17.170465104281902,
+      "stages": {
+        "prompt_encoding": 8.749775588512421e-07,
+        "denoising": 73.86092945799464,
+        "vae_decode": 5.404071167053189
+      }
+    },
+    {
+      "mode": "staged-next",
+      "steps": 4,
+      "seed": 1978,
+      "decoded_values_finite": true,
+      "seconds": 89.93143079197034,
+      "peak_mlx_gib": 13.373724017292261,
+      "stages": {
+        "prompt_encoding": 1.090444875007961,
+        "denoising": 79.90638508397387,
+        "vae_decode": 5.037845249986276
+      }
+    }
+  ],
+  "reuse_pixels_bit_exact": true,
+  "models_released": true,
+  "state_preparation": {
+    "steps": 1,
+    "decoded_values_finite": false,
+    "included_in_quality_gate": false,
+    "note": "A one-step render initialized session state but produced nonfinite decode values; its pixels and timing are excluded. The subsequent four-step resident and staged probes decoded finite values."
+  }
+}
