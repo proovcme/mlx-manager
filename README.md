@@ -1,131 +1,123 @@
-# MLX Image Kit
+<div align="center">
 
-[English](README.md) · [Русский](README.ru.md)
+# MLX Manager
 
-**Local image generation on Apple Silicon with Qwen-Image 2.1, a native 4-bit MLX loader, staged execution, and an optional denoising cache.** Use the interactive CLI, a script-friendly direct command, or a sequential batch. Vanilla generation is the default.
+### Models. Chat. Images. On your Mac.
 
-![Sunlit glass conservatory after rain, with a cat in a wicker chair](assets/showcase.png)
+A local toolkit for Apple Silicon — a model workbench and an image engine in one repository.
 
-Qwen-Image 2.1 · native 4-bit MLX · Mac mini M4, 24 GB unified memory<br>
-1152×768 · 20 steps · `balanced` cache
+![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-MLX-b5dc78?labelColor=171c18)
+![Python](https://img.shields.io/badge/Python-3.12%2B-b5dc78?labelColor=171c18)
+![License](https://img.shields.io/badge/License-MIT-b5dc78?labelColor=171c18)
 
-## One model, many visual languages
+[Quick start](#quick-start) · [What's inside](#whats-inside) · [Screenshots](#screenshots) · [Русский](README.ru.md)
 
-Every image below was generated locally with the same 4-bit model and 20 denoising steps. These are showcase outputs, not paired benchmarks. Open an image to inspect it at full resolution.
+</div>
 
-| Woodblock print | 1970s comic |
+![Image workspace with a local gallery](docs/screenshots/gallery.jpg)
+
+## What's inside
+
+| Component | What it does |
 | --- | --- |
-| <a href="assets/gallery/woodblock.png"><img src="assets/gallery/woodblock.png" alt="Ukiyo-e inspired storm sea and lighthouse" width="360"></a> | <a href="assets/gallery/comic.png"><img src="assets/gallery/comic.png" alt="Retro futuristic city in a Franco-Belgian comic style" width="360"></a> |
-| **Isometric game scene** | **Exploded-view illustration** |
-| <a href="assets/gallery/isometric.png"><img src="assets/gallery/isometric.png" alt="Cutaway isometric Mars base" width="360"></a> | <a href="assets/gallery/exploded-view.png"><img src="assets/gallery/exploded-view.png" alt="Exploded-view cassette recorder with part labels" width="360"></a> |
-| **1960s print poster** |  |
-| <a href="assets/gallery/poster.png"><img src="assets/gallery/poster.png" alt="Italian coffee poster with large CAFFÈ LUNA typography" width="360"></a> |  |
+| **[Manager](manager/README.md)** | Finds local models and oMLX / MLX LM engines. Starts a selected model, streams chats, saves conversations and drafts, and displays image progress. |
+| **[Image Kit](image-kit/README.md)** | Qwen Image 2.1 with a native 4-bit MLX loader. Interactive, direct and batch generation; optional denoising cache. |
+| **[Launcher](run.py)** | `manager`, `image` and `check` from the toolkit root. |
 
-The poster renders its two requested text lines clearly. The exploded view demonstrates short labels, but its mechanism is an illustration, **not an engineering assembly drawing**. Generated text and fine details should always be reviewed before publication.
-
-## Measured `off` vs `balanced`
-
-`off` runs the vanilla denoising loop. `balanced` may reuse a previous transformer result when consecutive steps are sufficiently similar. It is an explicit choice; the default is **`off`**.
-
-| 1152×768 · 20 steps | Total, `off` | Total, `balanced` | Denoising speedup | SSIM |
-| --- | ---: | ---: | ---: | ---: |
-| Paired test 1 | 377.08 s | 227.49 s | 1.67× | 0.9645 |
-| Paired test 2 | 448.13 s | 299.06 s | 1.53× | 0.9732 |
-
-These are two measured workloads on a Mac mini M4 with 24 GB unified memory, separate from the gallery. Results vary by prompt and machine; visual differences remain possible. `off` is the reference mode. The cache is scoped to one image, including each job in a batch. The mechanism is project-specific, inspired by approaches such as [TeaCache](https://arxiv.org/abs/2411.19108) and [Cache-DiT](https://github.com/vipshop/cache-dit); it is not a direct port.
+The two components keep their own code and tests. Image Kit's inference engine
+is preserved; the manager calls it for generation. Models and text inference
+engines are installed separately. Model weights are not included.
 
 ## Quick start
 
-Requires an Apple Silicon Mac and Python 3.12 or newer. The tested configuration is listed above; other memory sizes have not been benchmarked here.
+Requires **macOS on Apple Silicon** and **Python 3.12+**.
 
 ```sh
-git clone https://github.com/proovcme/mlx-image-kit.git
-cd mlx-image-kit
+git clone https://github.com/proovcme/mlx-manager.git
+cd mlx-manager
 python3.12 -m venv .venv
-. .venv/bin/activate
-python -m pip install .
-mlx-image
+.venv/bin/python -m pip install ./image-kit
+.venv/bin/python run.py
 ```
 
-The first run uses the Hugging Face cache and downloads missing model files. To use an existing snapshot instead, pass `--model-path PATH`. Model weights are not included in this repository. Review the [model license](#model-and-license) before using them.
+Open **http://127.0.0.1:1924/**. Select a model, click **Start**, and write a prompt.
+The composer switches between chat and image controls when you select a model.
 
-The interactive prompt accepts one line immediately, or multiple lines with `/paste`:
+For text models, install **[oMLX](https://github.com/jundot/omlx)** or
+**[MLX LM](https://github.com/ml-explore/mlx-lm)** separately. The manager discovers
+existing executables on PATH, in Homebrew and in `uv tool` environments. Local
+models are found in the Hugging Face cache, `~/models`, `~/.omlx/models` and
+`~/.lmstudio/models`.
 
-```text
-image › /paste
-Paste your prompt below.
-Finish with /end · cancel with /cancel
-│ A red ceramic teapot on a worn wooden table.
-│
-│ Soft daylight through an old window.
-│ /end
-```
-
-Blank lines and Unicode are preserved. Generation starts only after `/end`; `/cancel` discards the multiline prompt. The prompt is not echoed in the generation summary.
-
-### Interactive commands
-
-| Command | What it does |
-| --- | --- |
-| `/portrait`, `/landscape`, `/square` | Select 768×1152, 1152×768, or 1024×1024 |
-| `/size WIDTHxHEIGHT` | Set dimensions divisible by 16 |
-| `/steps N` | Set denoising steps |
-| `/seed N` or `/seed random` | Fix or randomize the seed |
-| `/guidance X` | Set guidance |
-| `/cache off` or `/cache balanced` | Select vanilla or optional cached denoising |
-| `/status` | Show current settings, including cache mode |
-| `/paste`, `/end`, `/cancel` | Enter, finish, or discard a multiline prompt |
-| `/last`, `/history`, `/repeat` | Inspect or repeat completed local jobs |
-| `/open` | Open the last PNG on macOS |
-| `/help`, `/quit` | Show help or exit |
-
-Defaults: 1152×768, 20 steps, guidance 1.0, random seed, cache `off`. `/repeat` restores the complete prompt, seed, dimensions, guidance, steps, and cache mode. Old history entries without a cache field are treated as `off`.
-
-### Direct command
+Image generation in the manager needs a complete cached
+`mlx-community/Qwen-Image-2.1-MLX-4bit` snapshot. To download missing weights
+through Image Kit and start its interactive CLI:
 
 ```sh
-python generate.py \
-  --prompt "A red ceramic teapot on a wooden table" \
-  --output output.png \
-  --width 1152 --height 768 \
-  --steps 20 --seed 1977 --guidance 1.0 \
-  --cache balanced
+.venv/bin/python run.py image
 ```
 
-Omit `--cache` for vanilla generation. `--cache off` is also accepted. Use `--model-path PATH` for an existing local snapshot.
+Image Kit can download missing model files; the manager itself never downloads
+or starts a model implicitly. See [model and license details](image-kit/README.md#model-and-license).
 
-The terminal shows one denoising progress indicator and a measured summary when the PNG is saved. `--quiet` prints only saved PNG paths on stdout; errors go to stderr. `--verbose` shows the model source and loader details. Redirected output uses a few plain progress lines rather than terminal animation.
+## Screenshots
 
-### Sequential batch
+### A conversation that stays with you
 
-A `.txt` file contains one prompt per nonempty line. A `.jsonl` file can also set `output`, `width`, `height`, `steps`, `seed`, and `guidance` for each job:
+![Local chat, streaming and saved history](docs/screenshots/chat.jpg)
 
-```jsonl
-{"prompt":"A red ceramic teapot on a wooden table","output":"image-a.png","width":1152,"height":768,"steps":20,"seed":1977,"guidance":1.0}
-{"prompt":"A small wooden cabin by a lake","output":"image-b.png","width":768,"height":1152,"steps":20,"seed":42,"guidance":1.0}
-```
+Replies arrive as a stream. Prompt processing, reasoning and answering have
+visible states. Conversations, partial replies, system prompts, parameters and
+drafts are saved locally; **New Chat** keeps earlier conversations in history.
+
+### Generation you can follow
+
+![Image generation stages and step progress](docs/screenshots/progress.jpg)
+
+Follow encoder loading, denoising steps, cache counters, decoding and elapsed
+time. Completed images go into the gallery, with PNG download and parameter
+reuse. Old images without recorded parameters remain viewable.
+
+Screenshots use an isolated local workspace, a neutral chat with a real local
+model and public Image Kit showcase images. They contain no private conversation
+history, machine paths or model weights.
+
+## A few commands
 
 ```sh
-mlx-image batch local/prompts.txt --cache balanced
-mlx-image batch local/jobs.jsonl --cache balanced --output-dir outputs/
+.venv/bin/python run.py                 # model workbench
+.venv/bin/python run.py image           # interactive image CLI
+.venv/bin/python run.py image direct --help # direct generation options
+.venv/bin/python manager/cli.py status
+.venv/bin/python run.py check           # both Python suites + SSE parser
 ```
 
-The batch-wide cache mode defaults to `off`. `--count N` makes N variations per prompt; a fixed seed increments for each variation. Batch jobs run sequentially, reuse the loaded transformer, and each gets fresh cache state. A failed job is reported by number without printing its prompt. Run `mlx-image batch --help` for all flags.
+**76 Python tests** pass across both components (29 manager + 47 image engine),
+plus JavaScript syntax and SSE parser checks. These checks need the installed
+Image Kit dependencies; they do not download models or run a GPU benchmark.
+The optional [CI template](ci/checks.yml.example) is provided separately.
 
-For shell automation, batch `--quiet` prints one saved PNG path per line on stdout; failures are reported on stderr. Batch `--verbose` shows model source and loader details.
+## Local by design
 
-## Why the native Q4 loader matters
+- One managed heavy workload at a time. Active requests and external-process
+  conflicts block unsafe switching.
+- After a service restart, only recorded processes with matching PID, birth time,
+  command and process group are recovered.
+- Deleting a model previews its folder and requires typing its name. The model
+  moves to recoverable Trash, including its HF blobs, refs and snapshots.
+- User data stays in `~/.local/share/mlx-manager`. Chats and image prompts are
+  stored there intentionally; they are excluded from Git.
 
-The working path in [`mlx_image/engine.py`](mlx_image/engine.py) loads the local Qwen-Image 2.1 MLX 4-bit snapshot through a custom loader. It does not substitute the default mflux or Hugging Face loader.
+The control plane listens on loopback and has no authentication. Use it on a
+trusted local machine; do not expose its port to a network. Direct launches
+outside the manager can bypass its resource lock. The current chat composer
+accepts text; image attachments for VLMs are not implemented yet.
 
-| Component | Loading behavior |
-| --- | --- |
-| Text encoder | Create `Qwen21TextEncoder`; quantize to affine 4-bit with group size 64; remap 904 keys from `language_model.model.*`; load with `strict=True`. Order: **quantize → remap → strict load**. |
-| Transformer | Create native Q4 `Qwen21Transformer` with group size 64; remap `modulation.0.*` to `modulation.layers.1.*` and `time_text_embed.linear_*` to `time_text_embed.timestep_embedder.linear_*`; load with `strict=True`. The tested local snapshot needs 3 + 6 such key remaps. |
-| VAE | Map `.gamma`/`.beta` and convolution paths, then select only keys with matching target shapes. The VAE retains the working prototype's `strict=False` update behavior. |
+**Vanilla image generation** is the reference. `balanced` caching is optional
+and can change an image; the paired measurements and limits are documented in
+[Image Kit](image-kit/README.md#measured-off-vs-balanced).
 
-Execution is staged: encode prompts and release the text encoder; load the transformer, denoise and release it; load the VAE, decode and save PNGs. Batch mode spills intermediate arrays to a temporary directory and loads each heavy component once.
+## Documentation
 
-## Model and license
-
-This repository's [MIT license](LICENSE) covers its code, **not the model weights**. The default weights come from [`mlx-community/Qwen-Image-2.1-MLX-4bit`](https://huggingface.co/mlx-community/Qwen-Image-2.1-MLX-4bit). The underlying [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) limits use of the model materials to noncommercial research or evaluation unless a separate commercial license is obtained. Read the full terms before use.
+[Manager setup & API](manager/README.md) · [Image generation & batch](image-kit/README.md) ·
+[Русская документация](README.ru.md) · [MIT license](LICENSE)
