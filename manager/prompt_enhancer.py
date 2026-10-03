@@ -57,7 +57,7 @@ class PromptEnhancer:
         try:
             self.job = json.loads(self.path.read_text())
             if self.job.get('state') == 'running':
-                self.job.update(state='interrupted', stage='interrupted', error='Manager restarted before prompt expansion completed')
+                self.job.update(state='interrupted', stage='interrupted', error='Manager restarted before workflow completed')
                 ownership.write(self.path, self.job)
         except (OSError, ValueError, AttributeError):
             self.job = None
@@ -128,6 +128,7 @@ class PromptEnhancer:
             if not self.busy():
                 raise ValueError('No running prompt expansion')
             self.cancelled.set()
+            self.manager.cancel_chat(self.job['id'])
             self.update(stage='cancelling')
             return self.snapshot()
 
@@ -158,7 +159,7 @@ class PromptEnhancer:
             orientation = 'square' if width == height else 'horizontal' if width > height else 'vertical'
             spec = dict(messages=[dict(role='system', content=SYSTEM_PROMPT),
                                   dict(role='user', content=f'Canvas: {orientation}. Image brief: {self.job["original_prompt"]}')],
-                        max_tokens=2048, temperature=.6)
+                        max_tokens=2048, temperature=.6, request_id=self.job['id'])
             content, finish, saved = '', None, 0
             stream = self.manager.stream_chat(spec)
             try:

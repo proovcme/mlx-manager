@@ -13,6 +13,7 @@ def main() -> int:
     # A series uses JSON lines and keeps stdin open. A single-image caller closes
     # stdin after one JSON object, preserving the original subprocess contract.
     session = None
+    recorder = None
     code = 0
     try:
         for line in sys.stdin:
@@ -54,6 +55,8 @@ def main() -> int:
                 summary = run_presented(runner, [image], model_path=Path(job["model_path"]),
                                         cache_config=_cache_config(job["cache"]))
                 recorder.data["stage"] = "done" if summary.completed else "cancelled" if summary.interrupted else "failed"
+                if summary.failed:
+                    recorder.data['error'] = summary.failed[0].message
                 recorder.write()
                 for failure in summary.failed:
                     report_failure(failure)
@@ -70,6 +73,11 @@ def main() -> int:
                 break
     except KeyboardInterrupt:
         code = 130
+    except Exception as exc:
+        if recorder:
+            recorder.data.update(stage='failed', error=str(exc))
+            recorder.write()
+        raise
     finally:
         if session:
             session.close()

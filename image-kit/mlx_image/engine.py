@@ -266,6 +266,8 @@ def _denoise(
 
 
 def _save_png(decoded, output: Path) -> None:
+    if not bool(mx.all(mx.isfinite(decoded)).item()):
+        raise ValueError('Image decoding produced NaN or infinity; no image was saved. Try more denoising steps.')
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.parent / f".mlx-image-{uuid.uuid4().hex}.png"
     try:

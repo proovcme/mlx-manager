@@ -120,10 +120,11 @@ stop the workflow instead of being passed to the image model.
 .venv/bin/python run.py check           # both Python suites + SSE parser
 ```
 
-**95 Python tests** pass across both components (40 manager + 55 image engine),
+**105 Python tests** pass across both components (48 manager + 57 image engine),
 plus JavaScript syntax and SSE parser checks. These checks need the installed
 Image Kit dependencies; they do not download models or run a GPU benchmark.
 The optional [CI template](ci/checks.yml.example) is provided separately.
+See the [installation and recovery checks](docs/reliability.md) for their scope.
 
 ## Local by design
 

@@ -12,6 +12,7 @@ from pathlib import Path
 import config
 import memory
 import ownership
+from transport import open_stream
 
 
 PORT = 1925
@@ -91,8 +92,13 @@ class ModelRuntime:
         else:
             args = [executable, "--model", model["path"], "--host", "127.0.0.1", "--port", str(PORT)]
         with open(config.DATA_ROOT / "model.log", "a", encoding="utf-8") as log:
-            self.process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT,
-                env=dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1"), start_new_session=True)
+            try:
+                self.process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT,
+                    env=dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1"), start_new_session=True)
+            except OSError as exc:
+                self.process, self.state, self.error = None, 'failed', str(exc)
+                self._save()
+                raise RuntimeError('Could not launch text runtime: ' + str(exc)) from exc
         process = self.process
         self._save()
         self._wait_ready(process, backend, generation)
@@ -126,18 +132,14 @@ class ModelRuntime:
             if generation == self._generation:
                 self.state, self.error = "failed", "Model did not become ready; see model log"
                 if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGTERM)
+                    ownership.stop(process)
         threading.Thread(target=wait_ready, daemon=True).start()
 
     def stop(self):
         self._generation += 1
         if self.running():
             process = self.process
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=20)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError("Model process has not stopped yet") from exc
+            ownership.stop(process)
         self.state, self.process, self.api_model, self.error = "stopped", None, None, None
         self._save()
 
@@ -145,11 +147,11 @@ class ModelRuntime:
         with self.open_chat(messages, max_tokens, temperature) as response:
             return json.load(response)
 
-    def open_chat(self, messages, max_tokens, temperature, stream=False):
+    def open_chat(self, messages, max_tokens, temperature, stream=False, on_socket=None):
         if self.state != "ready" or not self.running():
             raise RuntimeError("Selected model is not ready")
         payload = {"model": self.api_model, "messages": messages, "stream": stream,
                    "max_tokens": max_tokens, "temperature": temperature}
         request = urllib.request.Request(BASE + "/v1/chat/completions", data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
-        return urllib.request.urlopen(request, timeout=300)
+        return open_stream(request, on_socket) if on_socket else urllib.request.urlopen(request, timeout=300)

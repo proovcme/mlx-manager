@@ -38,6 +38,8 @@ paths are committed. Existing LaunchAgents are never overwritten.
 - **Chats:** streaming text, a reasoning disclosure when the engine emits it,
   prompt-processing/thinking/answering states, elapsed time, and interruption.
   New Chat keeps previous conversations in the history selector.
+  Stop and browser disconnect close the upstream socket, including while the
+  backend is processing the prompt before sending response headers.
 - **Persistence:** chats, partial replies, drafts, system prompts and parameters
   are saved locally. An explicit saving/error indicator and retry button expose
   failures. Concurrent tabs cannot silently overwrite a newer saved revision.
@@ -45,6 +47,9 @@ paths are committed. Existing LaunchAgents are never overwritten.
   cache counters, decoding, elapsed time, and cancellation. Completed images
   appear in a gallery with PNG download and parameter reuse. Older images
   without recorded prompts remain visible; their parameters cannot be recovered.
+  Cancellation escalates from interrupt to terminate and kill if the owned worker
+  does not exit. A decoding result containing NaN or infinity fails without saving
+  a PNG. Error details appear in the image activity panel.
 - **Recovery:** after a service restart, the manager can reattach to its recorded
   model or image worker only when PID, birth time, command and process group
   still match. It reacquires the heavy-workload lock. Unrecognized processes
@@ -134,6 +139,8 @@ Set **В серии** to 1–20. Each image uses the same prompt and settings, w
 and its generation steps. Stop cancels the current image and all remaining images;
 completed images stay in the gallery. Refreshing the page retains control. Restarting
 the service interrupts the pending queue; it does not automatically launch more images.
+The series status shows completed and remaining images, and retains the completed
+count after cancellation, failure or interruption.
 
 The compact local instructions follow Qwen's
 [documented prompt rewrite approach](https://github.com/QwenLM/Qwen-Image-2.1/tree/main/prompt_rewrite):

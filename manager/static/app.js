@@ -3,7 +3,7 @@ const bytes = n => n == null ? '—' : (n / 2 ** 30).toFixed(1) + ' ГБ';
 let listing = {models: [], runtimes: []}, selected = null, state = null, working = false;
 const chats = new Map(), sessions = new Map(), records = new Map(), drafts = new Map();
 let historyIndex = [], gallery = [], workspaceReady = false, saveQueue = Promise.resolve(), saveCount = 0;
-let draftTimer = null, chatSaveTimer = null, controller = null, viewingImage = null;
+let draftTimer = null, chatSaveTimer = null, controller = null, viewingImage = null, chatRequest = null;
 const unsaved = new Map();
 let promptJob = null, promptPollBusy = false, appliedPromptJob = null;
 const promptBusy = () => promptJob?.state === 'running';
@@ -69,6 +69,13 @@ let chatActivity = null, progressBusy = false;
 const duration = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2,'0')}`;
 function renderActivity() {
   const image = current()?.kind === 'image', job = state?.job;
+  const series = image && promptJob?.generate && promptJob.count > 1 ? promptJob : null;
+  $('series-status').hidden = !series;
+  if(series) {
+    const remaining = Math.max(0, series.count - (series.completed || 0));
+    const tail = series.state === 'running' ? series.stage === 'cancelling' ? 'Останавливаем серию…' : `Осталось ${remaining}` : ({done:'Серия завершена',cancelled:'Остальные отменены',failed:'Серия остановлена с ошибкой',interrupted:'Серия прервана. Можно запустить новую.'}[series.state] || series.state);
+    $('series-status').textContent = `Готово ${series.completed || 0} из ${series.count} · ${tail}`;
+  }
   if(image && promptJob?.state==='done' && !promptJob.generate && (!job || Date.parse(job.started_at)<promptJob.started_at*1000)) {$('activity').hidden=true;return;}
   if(image && promptBusy() && (promptJob.stage !== 'generating' || job?.id !== promptJob.image_job)) {
     $('activity').hidden=false;
@@ -79,8 +86,16 @@ function renderActivity() {
     $('activity-detail').textContent=promptJob.model_name || 'Подготовка серии';return;
   }
   const chat = !image && chatActivity?.id === selected ? chatActivity : null;
-  $('activity').hidden = !((image && job) || chat);
+  const loading = !image && state?.runtime?.model?.id === selected && state.runtime.state === 'starting';
+  $('activity').hidden = !((image && job) || chat || loading);
   if ($('activity').hidden) return;
+  if(loading && !chat) {
+    $('activity-stage').textContent='Загрузка модели…';
+    $('activity-time').textContent='';
+    $('activity-progress').removeAttribute('value');
+    $('activity-detail').textContent='После загрузки можно отправить сообщение. Загрузку можно остановить кнопкой «Выгрузить».';
+    return;
+  }
   if (chat) {
     $('activity-stage').textContent = chat.phase;
     $('activity-time').textContent = duration((Date.now()-chat.started)/1000);
@@ -98,7 +113,7 @@ function renderActivity() {
   else if (stage === 'denoising' && total) $('activity-progress').value = 100 * (p.step || 0) / total;
   else if (stage === 'decoding') $('activity-progress').value = 100;
   else $('activity-progress').removeAttribute('value');
-  $('activity-detail').textContent = stage === 'denoising' ? total ? `Шаг ${p.step || 0} из ${total}${p.skipped != null ? ' · вычислено '+p.computed+' · из кеша '+p.skipped : ''}` : 'Ожидаем отметку первого шага' : stage === 'cancelling' ? 'Ожидаем завершения текущего этапа' : stage === 'cancelled' ? 'Задание остановлено' : stage === 'interrupted' ? 'Процесс завершился без результата. Можно повторить генерацию.' : stage === 'failed' ? `Код завершения: ${job.exit_code ?? '—'}. Подробности в логах.` : stage === 'done' ? 'Сохранено на этом Mac' : 'Операция выполняется';
+  $('activity-detail').textContent = stage === 'denoising' ? total ? `Шаг ${p.step || 0} из ${total}${p.skipped != null ? ' · вычислено '+p.computed+' · из кеша '+p.skipped : ''}` : 'Ожидаем отметку первого шага' : stage === 'cancelling' ? 'Останавливаем процесс; если он не отвечает, завершение будет принудительным.' : stage === 'cancelled' ? 'Задание остановлено' : stage === 'interrupted' ? 'Процесс завершился без результата. Можно повторить генерацию.' : stage === 'failed' ? humanError(job.error) || `Код завершения: ${job.exit_code ?? '—'}. Можно повторить генерацию; подробности в логах.` : stage === 'done' ? 'Сохранено на этом Mac' : 'Операция выполняется';
 }
 async function refreshProgress() {
   renderActivity();
@@ -127,6 +142,9 @@ function humanError(text) {
     'Selected model has active requests':'Модель ещё выполняет запрос. Дождитесь завершения ответа.',
     'Image generation is running':'Генерация ещё идёт. Дождитесь завершения или отмените её.',
     'No running image job':'Активной генерации нет.',
+    'Manager restarted before workflow completed':'Менеджер перезапущен. Завершённые изображения сохранены; можно запустить новую серию.',
+    'Manager restarted before prompt expansion completed':'Менеджер перезапущен. Завершённые изображения сохранены; можно запустить новую серию.',
+    'Image decoding produced NaN or infinity; no image was saved. Try more denoising steps.':'Декодер вернул некорректные значения. Изображение не сохранено; попробуйте увеличить число шагов.',
     'Heavy-memory lock held by another process':'GPU занят другим заданием. Дождитесь его завершения.',
     'External heavy process detected; resolve it manually':'Обнаружен внешний процесс модели. Остановите его в приложении, где он был запущен.',
     'Memory pressure is unknown or too high for image generation':'Для генерации сейчас недостаточно свободной памяти. Выгрузите другие модели и повторите.',
@@ -219,7 +237,7 @@ function renderConversation() {
   if (!history.length) {
     const empty = document.createElement('div'); empty.className = 'empty';
     const title = document.createElement('div'); title.className = 'empty-title'; title.textContent = current()?.name || 'Выберите модель';
-    const hint = document.createElement('p'); hint.textContent = current() ? 'Запустите модель и начните разговор' : 'Локальные модели появятся слева'; empty.append(title, hint); area.append(empty); return;
+    const hint = document.createElement('p'); hint.textContent = current() ? 'Запустите модель и начните разговор' : 'Поместите MLX-модель в ~/models или Hugging Face кеш и обновите каталог кнопкой ↻. Для чата нужен движок MLX LM или oMLX.'; empty.append(title, hint); area.append(empty); return;
   }
   for (const message of history) {
     const row = document.createElement('article'); row.className = 'message ' + message.role;
@@ -243,13 +261,14 @@ function updateControls() {
   $('start').disabled = !model?.available || busy || reserved || runningImage || state?.mode === 'conflict' || state?.mode === 'external_image';
   $('stop').disabled = busy || reserved || runningImage || !activeModel();
   const autoImage=model?.kind==='image' && ($('auto-enhance').checked || Number($('series-count').value)>1) && model.available && !['conflict','external_image'].includes(state?.mode);
-  $('send').disabled = !(ready || autoImage) || busy || reserved || runningImage;
+  $('send').disabled = !(ready || autoImage) || busy || reserved || runningImage || Boolean(state?.active_chat_requests);
   $('enhance').disabled=!model || busy || reserved || runningImage || !$('prompt-model').value || ['conflict','external_image'].includes(state?.mode);
   for(const id of ['auto-enhance','prompt-model','series-count','prompt','restore-idea'])$(id).disabled=busy;
   $('cancel-prompt').hidden=!promptBusy(); $('cancel-prompt').disabled=promptJob?.stage==='cancelling';
   $('cancel-prompt').textContent=promptJob?.stage==='generating' ? 'Остановить серию' : 'Остановить подготовку';
  $('cancel-chat').hidden=!controller; renderHistory(); $('cancel').hidden = !runningImage || promptBusy(); $('cancel').disabled = busy || Boolean(state?.job?.cancel_reason);
-  $('model-status').textContent = reserved ? 'GPU занят другим заданием' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX / Guardian' : 'Не запущена';
+  const failedModel = state?.runtime?.state === 'failed' && state.runtime.model?.id === selected;
+  $('model-status').textContent = failedModel ? 'Ошибка запуска · можно повторить' : reserved ? 'GPU занят другим заданием' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX' : 'Не запущена';
   $('compose-hint').textContent = reserved ? 'Другое задание занимает GPU; дождитесь его завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : 'Чаты и промпты сохраняются на этом Mac';
   renderActivity();
 }
@@ -275,7 +294,11 @@ async function startNewChat() {if(working)return; const old=currentRecord();if(o
 $('new-chat').onclick=startNewChat;
 $('chat-history').onchange=async()=>{const id=$('chat-history').value;try{if(!records.has(id)){const entry=await api('/api/workspace/entry?id='+encodeURIComponent(id));records.set(id,{...entry,kind:'chat'})}chats.set(selected,id);sessions.delete(selected);renderConversation();if(records.get(id).value.status==='streaming')notice('Предыдущий ответ был прерван. Сохранён полученный текст.');else notice('');}catch(error){notice(error.message)}};
 $('retry-save').onclick=async()=>{for(const record of [...unsaved.values()])await persist(record).catch(()=>{});};
-$('cancel-chat').onclick=()=>controller?.abort();
+$('cancel-chat').onclick=async()=>{
+  const request_id=chatRequest;
+  controller?.abort();
+  if(request_id)try{await api('/api/chat/cancel','POST',{request_id});}catch(error){notice('Не удалось подтвердить остановку модели: '+error.message);}
+};
 for(const id of [...draftFields,'auto-enhance'])$(id).addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(()=>{draftTimer=null;saveDraft().catch(()=>{})},500);updateControls()});
 window.addEventListener('beforeunload',event=>{if(draftTimer || saveCount || unsaved.size || working){event.preventDefault();event.returnValue='';}});
 $('compose').onsubmit = async event => {
@@ -316,7 +339,7 @@ $('compose').onsubmit = async event => {
     if(last?.role==='assistant' && (last.content || last.reasoning)) notice('Ответ прерван: '+error.message);
     else {if(last?.role==='assistant')history.pop(); history.pop(); if(selected===id)$('prompt').value=prompt; notice(error.message);}
   }
-  finally {clearTimeout(chatSaveTimer);chatSaveTimer=null;controller=null;await persist(record).catch(()=>{});await saveDraft().catch(()=>{});chatActivity=null; working=false; if (selected===id) renderConversation(); updateControls(); }
+  finally {clearTimeout(chatSaveTimer);chatSaveTimer=null;controller=null;chatRequest=null;await persist(record).catch(()=>{});await saveDraft().catch(()=>{});chatActivity=null; working=false; if (selected===id) renderConversation(); await refresh(); updateControls(); }
 };
 function renderPromptModels() {
   const previous=$('prompt-model').dataset.chosen || $('prompt-model').value;
@@ -361,7 +384,7 @@ async function refreshPrompt() {
             const draft=captureDraft();draft.value.expansion={original_prompt:promptJob.original_prompt,prompt:promptJob.prompt,model:promptJob.model_name};await persist(draft);
           }
         }
-        if(promptJob.state==='failed' || promptJob.state==='interrupted')notice('Подготовка остановлена: '+promptJob.error);
+        if(promptJob.state==='failed' || promptJob.state==='interrupted')notice(humanError(promptJob.error || 'Подготовка остановлена. Можно повторить запуск.'));
         else if(promptJob.state==='cancelled')notice(`Остановлено. Готово изображений: ${promptJob.completed || 0}.`);
         else if(!promptJob.generate)notice('Промпт готов. Можно отредактировать его и создать изображение.');
         else notice(`Серия готова: ${promptJob.completed} из ${promptJob.count}.`);
@@ -376,6 +399,8 @@ $('enhance').onclick=()=>startPromptWorkflow(false);
 $('cancel-prompt').onclick=async()=>{try{promptJob=await api('/api/prompt/cancel','POST',{});updateControls()}catch(error){notice(error.message)}};
 $('restore-idea').onclick=()=>{const value=drafts.get(selected)?.value.expansion;if(value){$('prompt').value=value.original_prompt;saveDraft().catch(()=>{});notice('Исходный замысел восстановлен.')}};
 async function streamReply(body,onDelta) {
+  chatRequest=crypto.randomUUID();
+  body={...body,request_id:chatRequest};
   const response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:typeof controller!=='undefined'?controller?.signal:undefined});
   if(!response.ok) {const error=await response.json(); throw Error(error.error || response.statusText);}
   const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer='', done=false;

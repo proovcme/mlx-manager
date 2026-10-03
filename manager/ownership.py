@@ -1,6 +1,7 @@
 """Recover only processes whose PID, birth time, command and process group match."""
 import json
 import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -81,3 +82,27 @@ def recover(proof, result=None):
         return None
     process = RecoveredProcess(proof,result)
     return process if process.poll() is None else None
+
+
+def signal_group(process, sig):
+    """Signal only a live child or a recovered process with matching proof."""
+    if process.poll() is not None:
+        return
+    if isinstance(process, RecoveredProcess) and identity(process.pid) != process.proof['identity']:
+        return
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def stop(process, first=signal.SIGTERM, grace=10, terminate_grace=5):
+    """Bounded shutdown of an owned process group, including stuck Metal jobs."""
+    for sig, timeout in ((first, grace), (signal.SIGTERM, terminate_grace), (signal.SIGKILL, 5)):
+        if sig is not None:
+            signal_group(process, sig)
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+    raise RuntimeError('Owned process did not exit after forced shutdown')

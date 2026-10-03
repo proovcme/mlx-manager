@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -22,6 +23,7 @@ import ownership
 from store import Store
 from runtime import ModelRuntime, PORT as MODEL_PORT
 from prompt_enhancer import PromptEnhancer
+from transport import open_stream
 
 
 class ManagerError(Exception):
@@ -50,6 +52,8 @@ class Manager:
         self._heavy_held = False
         self._mu = threading.RLock()
         self._active_chat = 0
+        self._chat_requests = {}
+        self._cancelled_chats = {}
         self._enhancer = PromptEnhancer(self)
         self.store = Store()
         self._job = self._load_job()
@@ -62,7 +66,7 @@ class Manager:
                     stage = json.loads((config.DATA_ROOT / f"image-{self._job['id']}-progress.json").read_text()).get('stage')
                 except (OSError,ValueError):
                     stage = None
-                self._job['state'] = 'done' if stage == 'done' and Path(self._job['output']).is_file() else 'cancelled' if stage == 'cancelled' else 'interrupted'
+                self._job['state'] = 'cancelled' if self._job.get('cancel_reason') or stage == 'cancelled' else 'done' if stage == 'done' and Path(self._job['output']).is_file() else 'failed' if stage == 'failed' else 'interrupted'
                 self._job['finished_at'] = now()
                 self._save_job()
         self._mode = "idle"
@@ -76,6 +80,9 @@ class Manager:
             self.store.image(self._job)
         if self._worker:
             threading.Thread(target=self._watch_job, args=(self._worker,), daemon=True).start()
+            if self._job.get('cancel_reason'):
+                self._interrupt_worker(self._worker)
+                threading.Thread(target=self._finish_cancel, args=(self._worker,), daemon=True).start()
 
     def _prompt_guard(self):
         enhancer = getattr(self, '_enhancer', None)
@@ -311,14 +318,14 @@ class Manager:
             if self._runtime.running() and memory.established_connections(MODEL_PORT):
                 raise ManagerError("Selected model has active requests")
             self._lock_heavy()
-            self._stop_mara()
             try:
+                self._stop_mara()
                 self._runtime.stop()
                 executable = next(r["executable"] for r in listing["runtimes"] if r["id"] == backend)
                 result = self._runtime.start(model, backend, executable)
                 self._mode = "model"
                 return result
-            except RuntimeError as exc:
+            except (RuntimeError, OSError) as exc:
                 self._reconcile()
                 raise ManagerError(str(exc)) from exc
 
@@ -338,16 +345,36 @@ class Manager:
 
     def stream_chat(self, spec):
         messages, max_tokens, temperature = self.validate_chat(spec)
+        request_id = spec.get('request_id') or uuid.uuid4().hex
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 100:
+            raise ManagerError('Invalid chat request identifier')
         with self._mu:
             self._prompt_guard()
             self._reconcile()
             mode = self._mode
             if mode not in ("mara", "model"):
                 raise ManagerError("Start a chat model first")
+            if not hasattr(self, '_chat_requests'):
+                self._chat_requests = {}
+            if getattr(self, '_cancelled_chats', {}).pop(request_id, 0) > time.monotonic():
+                raise ManagerError('Chat cancelled')
+            if request_id in self._chat_requests:
+                raise ManagerError('Chat request already active')
+            control = {'cancelled': threading.Event(), 'socket': None}
+            self._chat_requests[request_id] = control
             self._active_chat += 1
         try:
+            def track_socket(sock):
+                with self._mu:
+                    control['socket'] = sock
+                    cancelled = control['cancelled'].is_set()
+                if cancelled:
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
             if mode == "model":
-                response = self._runtime.open_chat(messages, max_tokens, temperature, stream=True)
+                response = self._runtime.open_chat(messages, max_tokens, temperature, stream=True, on_socket=track_socket)
             else:
                 self._ensure_guardian()
                 payload = {"model": "Mara", "messages": messages, "max_tokens": max_tokens,
@@ -357,12 +384,39 @@ class Manager:
                     headers["X-Guardian-Session"] = str(spec["session"])
                 request = urllib.request.Request(config.GUARDIAN_V2 + "/v1/chat/completions",
                     data=json.dumps(payload).encode(), headers=headers, method="POST")
-                response = urllib.request.urlopen(request, timeout=300)
+                response = open_stream(request, track_socket)
             with response:
+                if control['cancelled'].is_set():
+                    raise ManagerError('Chat cancelled')
                 for line in response:
+                    if control['cancelled'].is_set():
+                        raise ManagerError('Chat cancelled')
                     yield line
         finally:
+            with self._mu:
+                self._chat_requests.pop(request_id, None)
             self.chat_leave()
+
+    def cancel_chat(self, request_id):
+        with self._mu:
+            control = getattr(self, '_chat_requests', {}).get(request_id)
+            if control is None:
+                if not hasattr(self, '_cancelled_chats'):
+                    self._cancelled_chats = {}
+                self._cancelled_chats = {k:v for k,v in self._cancelled_chats.items() if v > time.monotonic()}
+                if len(self._cancelled_chats) < 100:
+                    self._cancelled_chats[request_id] = time.monotonic() + 60
+                return {'cancelled': False}
+            control['cancelled'].set()
+            sock = control['socket']
+        # Shutdown unblocks a read even when the model emits no more tokens.
+        # close() alone can wait on the buffered reader's lock.
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        return {'cancelled': True}
 
     def chat(self, spec):
         messages, max_tokens, temperature = self.validate_chat(spec)
@@ -587,8 +641,11 @@ class Manager:
                 worker.stdin.flush()
                 if not persistent:
                     worker.stdin.close()
-            except OSError:
-                self._job["state"] = "failed"
+            except OSError as exc:
+                self._job['error'] = 'Could not send image job to worker: ' + str(exc)
+                self._job['cancel_reason'] = 'Worker input failed'
+                self._interrupt_worker(worker)
+                threading.Thread(target=self._finish_cancel, args=(worker,), daemon=True).start()
             self._save_job()
             threading.Thread(target=self._watch_job, args=(worker, job_id, persistent), daemon=True).start()
             return dict(self._job)
@@ -606,24 +663,35 @@ class Manager:
             footprint = memory.vmmap_summary(worker.pid)["footprint_bytes"]
             pressure = memory.system_memory()["pressure_free_percent"]
             with self._mu:
-                if self._job and self._worker is worker and footprint is not None:
+                owns_job = self._job and self._worker is worker and (job_id is None or self._job['id'] == job_id)
+                if owns_job and footprint is not None:
                     old = self._job["peak_footprint_bytes"] or 0
                     self._job["peak_footprint_bytes"] = max(old, footprint)
-                if self._job and self._worker is worker and pressure is not None:
+                if owns_job and pressure is not None:
                     old = self._job["min_pressure_free_percent"]
                     self._job["min_pressure_free_percent"] = min(old, pressure)
-            time.sleep(.5 if persistent else 5)
+            time.sleep(.5 if persistent else 1)
         code = (0 if terminal == 'done' else 130 if terminal == 'cancelled' else 1) if persistent and terminal else worker.wait()
         swap_after = memory.system_memory()["swap_used_bytes"]
         with self._mu:
             if self._job and self._worker is worker and (job_id is None or self._job['id'] == job_id):
+                try:
+                    recorded = json.loads((config.DATA_ROOT / f"image-{self._job['id']}-progress.json").read_text())
+                    if isinstance(recorded.get('error'), str):
+                        self._job['error'] = recorded['error'][:2000]
+                except (OSError, ValueError, AttributeError):
+                    pass
                 self._job["exit_code"] = code
                 self._job["finished_at"] = now()
                 self._job["swap_after_bytes"] = swap_after
-                self._job["state"] = ("done" if code == 0 and
-                                      Path(self._job["output"]).is_file()
-                                      else "cancelled" if self._job["cancel_reason"] or code == 130
-                                      else "failed")
+                if self._job.get('error'):
+                    self._job['state'] = 'failed'
+                elif self._job['cancel_reason'] or code == 130:
+                    self._job['state'] = 'cancelled'
+                elif code == 0 and Path(self._job['output']).is_file():
+                    self._job['state'] = 'done'
+                else:
+                    self._job['state'] = 'failed'
                 self._save_job()
                 if not persistent or worker.poll() is not None:
                     self._worker = None
@@ -634,33 +702,41 @@ class Manager:
             worker = self._session_worker
             if worker is None:
                 return
-            self._session_worker = None
             if worker.stdin and not worker.stdin.closed:
                 worker.stdin.close()
         try:
             worker.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            self._interrupt_worker(worker)
-            worker.wait(timeout=10)
+            ownership.stop(worker, first=signal.SIGINT, grace=5)
         with self._mu:
+            if self._session_worker is worker:
+                self._session_worker = None
             if self._worker is worker:
                 self._worker = None
 
     def _interrupt_worker(self, worker: subprocess.Popen) -> None:
-        if worker.poll() is None:
-            try:
-                os.killpg(worker.pid, signal.SIGINT)
-            except ProcessLookupError:
-                pass
+        ownership.signal_group(worker, signal.SIGINT)
+
+    def _finish_cancel(self, worker):
+        try:
+            ownership.stop(worker, first=None)
+        except (OSError, RuntimeError) as exc:
+            with self._mu:
+                if self._worker is worker and self._job:
+                    self._job['error'] = 'Cancellation failed: ' + str(exc)
+                    self._save_job()
 
     def cancel(self) -> dict:
         with self._mu:
             if not self._worker or self._worker.poll() is not None:
                 raise ManagerError("No running image job")
             assert self._job is not None
+            if self._job.get('cancel_reason'):
+                return dict(self._job)
             self._job["cancel_reason"] = "User requested"
             self._save_job()
             self._interrupt_worker(self._worker)
+            threading.Thread(target=self._finish_cancel, args=(self._worker,), daemon=True).start()
             return dict(self._job)
 
     def logs(self, service: str) -> str:
