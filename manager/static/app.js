@@ -5,6 +5,9 @@ const chats = new Map(), sessions = new Map(), records = new Map(), drafts = new
 let historyIndex = [], gallery = [], workspaceReady = false, saveQueue = Promise.resolve(), saveCount = 0;
 let draftTimer = null, chatSaveTimer = null, controller = null, viewingImage = null;
 const unsaved = new Map();
+let promptJob = null, promptPollBusy = false, appliedPromptJob = null;
+const promptBusy = () => promptJob?.state === 'running';
+const draftFields = ['prompt','system-prompt','max-tokens','temperature','size','steps','seed','cache','backend','prompt-model','series-count'];
 function savingStatus() {
   $('save-status').textContent = unsaved.size ? 'Есть несохранённые изменения' : saveCount ? 'Сохраняем…' : 'Сохранено на этом Mac';
   $('retry-save').hidden = !unsaved.size;
@@ -25,9 +28,11 @@ function persist(record) {
 }
 function captureDraft() {
   if(!selected || !workspaceReady)return;
-  const value={}; for(const id of ['prompt','system-prompt','max-tokens','temperature','size','steps','seed','cache','backend'])value[id]=$(id).value;
+  const value={}; for(const id of draftFields)value[id]=$(id).value;
   let draft=drafts.get(selected);
   if(!draft){draft={id:'draft_'+selected,kind:'draft',model:selected,revision:0,value};drafts.set(selected,draft)}
+  value['auto-enhance']=$('auto-enhance').checked;
+  value.expansion=draft.value?.expansion;
   draft.value=value; return draft;
 }
 function saveDraft() {const draft=captureDraft(); if(draft)return persist(draft); return Promise.resolve();}
@@ -56,7 +61,7 @@ function repeatImage(job) {
   if(!job.parameters){notice('У старого изображения параметры не были записаны. Повтор доступен для новых генераций.');return;}
   const p=job.parameters; $('prompt').value=p.prompt; $('size').value=`${p.width}x${p.height}`;
   if(!$('size').value)$('size').append(new Option(`${p.width} × ${p.height}`,`${p.width}x${p.height}`,true,true));
-  for(const key of ['steps','seed','cache'])$(key).value=p[key]; saveDraft(); $('prompt').focus(); notice('Параметры восстановлены. Нажмите «Создать изображение».');
+  for(const key of ['steps','seed','cache'])$(key).value=p[key]; $('auto-enhance').checked=false; $('series-count').value='1'; saveDraft(); $('prompt').focus(); notice('Параметры восстановлены. Нажмите «Создать изображение».');
 }
 
 let displayedImage = null;
@@ -64,6 +69,15 @@ let chatActivity = null, progressBusy = false;
 const duration = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2,'0')}`;
 function renderActivity() {
   const image = current()?.kind === 'image', job = state?.job;
+  if(image && promptJob?.state==='done' && !promptJob.generate && (!job || Date.parse(job.started_at)<promptJob.started_at*1000)) {$('activity').hidden=true;return;}
+  if(image && promptBusy() && (promptJob.stage !== 'generating' || job?.id !== promptJob.image_job)) {
+    $('activity').hidden=false;
+    const labels={loading:'Загрузка модели для промпта…',thinking:'Продумывает сцену…',rewriting:'Пишет промпт…',unloading:'Выгрузка текстовой модели…',cancelling:'Остановка…',generating:`Подготовка изображения ${promptJob.index} из ${promptJob.count}…`};
+    $('activity-stage').textContent=labels[promptJob.stage] || 'Подготовка…';
+    $('activity-time').textContent=duration(Date.now()/1000-promptJob.started_at);
+    $('activity-progress').removeAttribute('value');
+    $('activity-detail').textContent=promptJob.model_name || 'Подготовка серии';return;
+  }
   const chat = !image && chatActivity?.id === selected ? chatActivity : null;
   $('activity').hidden = !((image && job) || chat);
   if ($('activity').hidden) return;
@@ -76,7 +90,7 @@ function renderActivity() {
   }
   const p = job.progress || {}, labels = {preparing:'Подготовка',loading_encoder:'Загрузка текстового энкодера',encoding:'Обработка промпта',loading_transformer:'Загрузка модели изображения',denoising:'Генерация',decoding:'Декодирование изображения',done:'Изображение готово',failed:'Ошибка генерации',cancelled:'Генерация отменена',detached:'Менеджер перезапущен',interrupted:'Задание прервано',cancelling:'Отмена генерации…'};
   const stage = job.state === 'running' ? job.cancel_reason ? 'cancelling' : p.stage || 'preparing' : job.state;
-  $('activity-stage').textContent = labels[stage] || stage;
+  $('activity-stage').textContent = (promptBusy() && promptJob.stage === 'generating' ? `Изображение ${promptJob.index} из ${promptJob.count} · ` : '') + (labels[stage] || stage);
   const ended = job.finished_at ? Date.parse(job.finished_at) : Date.now();
   $('activity-time').textContent = duration(Math.max(0,(ended-Date.parse(job.started_at))/1000));
   const total = p.total || job.steps;
@@ -88,7 +102,7 @@ function renderActivity() {
 }
 async function refreshProgress() {
   renderActivity();
-  if (current()?.kind !== 'image' || !state?.job || state.job.state !== 'running' || progressBusy) return;
+  if (current()?.kind !== 'image' || !state || !(state.job?.state === 'running' || promptBusy() && ['generating','cancelling'].includes(promptJob.stage)) || progressBusy) return;
   progressBusy = true;
   try {
     let result;
@@ -97,7 +111,7 @@ async function refreshProgress() {
       const text=(await api('/api/logs?service=image')).text || '', matches=[...text.matchAll(/Denoising (\d+)\/(\d+)/g)], last=matches.at(-1);
       result={job:{...state.job,progress:{stage:text.includes('✓ Saved')?'done':text.includes('Decoding')?'decoding':text.includes('Generating')?'denoising':'preparing',step:last?Number(last[1]):0,total:last?Number(last[2]):null}}};
     }
-    if (result.job?.id === state.job.id) {state.job=result.job; renderActivity(); if (state.job.state==='done') {await loadGallery();renderConversation();}}
+    if (result.job && (promptBusy() || result.job.id === state.job?.id)) {state.job=result.job; renderActivity(); if (state.job.state==='done' && !gallery.some(j=>j.id===state.job.id)) {await loadGallery();renderConversation();}}
   } catch (_) {} finally {progressBusy=false;}
 }
 async function api(path, method = 'GET', body) {
@@ -137,12 +151,12 @@ function renderModels() {
     const name = document.createElement('span'); name.className = 'model-name'; name.textContent = model.name;
     const meta = document.createElement('span'); meta.className = 'model-meta';
     meta.textContent = `${model.kind === 'image' ? 'Изображения · MLX' : model.vision ? 'Чат · VLM' : 'Чат'} · ${bytes(model.weight_bytes)}${model.id === activeModel() ? ' · активна' : ''}${!model.available ? ' · нет движка' : ''}`;
-    button.append(name, meta); button.disabled=working; button.onclick = () => choose(model.id); list.append(button);
+    button.append(name, meta); button.disabled=working || promptBusy(); button.onclick = () => choose(model.id); list.append(button);
   }
   if (!list.children.length) { const text = document.createElement('p'); text.className = 'caption'; text.textContent = 'Модели не найдены'; list.append(text); }
 }
 async function choose(id) {
-  if(working && selected!==id)return;
+  if(selected && (working || promptBusy()) && selected!==id)return;
   if(selected && selected!==id) await saveDraft().catch(()=>{});
   clearTimeout(draftTimer);draftTimer=null; selected = id;
   try{localStorage.setItem('selected-model',id)}catch(_){} displayedImage = null; viewingImage=null;
@@ -159,15 +173,20 @@ async function choose(id) {
   $('backend').hidden = model?.kind === 'image';
   $('image-options').hidden = model?.kind !== 'image';
   $('chat-options').hidden = model?.kind === 'image';
+  $('prompt-options').hidden = model?.kind !== 'image';
+  renderPromptModels();
   $('send').textContent = model?.kind === 'image' ? 'Создать изображение' : 'Отправить';
   $('prompt').placeholder = model?.kind === 'image' ? 'Опишите изображение…' : 'Сообщение модели…';
   const value=drafts.get(id)?.value || {};
-  const defaults={prompt:'','system-prompt':'','max-tokens':'2048',temperature:'0.7',size:'1152x768',steps:'20',seed:'1977',cache:'balanced',backend:'auto'};
+  const defaults={prompt:'','system-prompt':'','max-tokens':'2048',temperature:'0.7',size:'1152x768',steps:'20',seed:'1977',cache:'balanced',backend:'auto','series-count':'1','prompt-model':$('prompt-model').value};
   for(const key of Object.keys(defaults))$(key).value=value[key] ?? defaults[key];
+  $('prompt-model').dataset.chosen=$('prompt-model').value;
+  $('auto-enhance').checked=value['auto-enhance'] === true;
+  showPromptPreview(value.expansion);
   renderHistory(); renderModels(); renderConversation(); updateControls(); renderActivity();
 }
 function renderConversation() {
-  const area = $('conversation'); area.replaceChildren();
+  const area = $('conversation'); area.replaceChildren($('prompt-preview'));
   if (current()?.kind === 'image') {
     const job=gallery.find(j=>j.id===viewingImage);
     if(job) {
@@ -178,6 +197,8 @@ function renderConversation() {
       const download=document.createElement('a');download.textContent='Скачать PNG';download.href=image.src;download.download=job.id+'.png';
       tools.append(back,repeat,download);area.append(tools,image);
       const detail=document.createElement('p');detail.className='caption';detail.textContent=job.parameters ? `${job.parameters.width} × ${job.parameters.height} · ${job.parameters.steps} шагов · seed ${job.parameters.seed} · ${job.parameters.cache}` : 'Параметры старой генерации не записаны';area.append(detail);
+      if(job.parameters?.prompt_expansion){const original=document.createElement('p');original.className='caption';original.textContent='Исходный замысел: '+job.parameters.prompt_expansion.original_prompt;area.append(original)}
+      if(job.parameters?.series){const series=document.createElement('p');series.className='caption';series.textContent=`Серия · ${job.parameters.series.index} из ${job.parameters.series.count}`;area.append(series)}
       if(job.parameters){const text=document.createElement('p');text.className='message-body';text.textContent=job.parameters.prompt;area.append(text)}
     } else if(gallery.length) {
       const title=document.createElement('p');title.className='caption';title.textContent=`Галерея · ${gallery.length} изображений`;area.append(title);
@@ -211,26 +232,33 @@ function renderConversation() {
   }
 }
 function updateControls() {
-  $('scan').disabled=working; $('backend').disabled=working;
+  const busy=working || promptBusy();
+  $('scan').disabled=busy; $('backend').disabled=busy;
+  for(const button of $('models').querySelectorAll('button'))button.disabled=busy;
   const model = current(), reserved = state?.reserved, runningImage = state?.job?.state === 'running';
   const active = selected === activeModel();
   const ready = active && (state?.mode === 'mara' || state?.mode === 'image' || state?.runtime?.state === 'ready');
-  $('delete-model').disabled = !model || working || reserved || state?.mode !== 'idle';
+  $('delete-model').disabled = !model || busy || reserved || state?.mode !== 'idle';
   $('delete-model').title = state?.mode !== 'idle' || reserved ? 'Сначала выгрузите модели и дождитесь окончания заданий' : 'Проверить путь и переместить модель в корзину';
-  $('start').disabled = !model?.available || working || reserved || runningImage || state?.mode === 'conflict' || state?.mode === 'external_image';
-  $('stop').disabled = working || reserved || runningImage || !activeModel();
-  $('send').disabled = !ready || working || reserved || runningImage;
- $('cancel-chat').hidden=!controller; renderHistory(); $('cancel').hidden = !runningImage; $('cancel').disabled = working || Boolean(state?.job?.cancel_reason);
+  $('start').disabled = !model?.available || busy || reserved || runningImage || state?.mode === 'conflict' || state?.mode === 'external_image';
+  $('stop').disabled = busy || reserved || runningImage || !activeModel();
+  const autoImage=model?.kind==='image' && ($('auto-enhance').checked || Number($('series-count').value)>1) && model.available && !['conflict','external_image'].includes(state?.mode);
+  $('send').disabled = !(ready || autoImage) || busy || reserved || runningImage;
+  $('enhance').disabled=!model || busy || reserved || runningImage || !$('prompt-model').value || ['conflict','external_image'].includes(state?.mode);
+  for(const id of ['auto-enhance','prompt-model','series-count','prompt','restore-idea'])$(id).disabled=busy;
+  $('cancel-prompt').hidden=!promptBusy(); $('cancel-prompt').disabled=promptJob?.stage==='cancelling';
+  $('cancel-prompt').textContent=promptJob?.stage==='generating' ? 'Остановить серию' : 'Остановить подготовку';
+ $('cancel-chat').hidden=!controller; renderHistory(); $('cancel').hidden = !runningImage || promptBusy(); $('cancel').disabled = busy || Boolean(state?.job?.cancel_reason);
   $('model-status').textContent = reserved ? 'GPU занят другим заданием' : active ? state.mode === 'model' ? ({starting:'Загружается…', ready:'Готова · ' + state.runtime.backend, failed:'Ошибка запуска', stopped:'Остановлена'}[state.runtime.state] || state.runtime.state) : state.mode === 'image' ? runningImage ? 'Генерация…' : 'Готова · MLX' : 'Готова · oMLX / Guardian' : 'Не запущена';
   $('compose-hint').textContent = reserved ? 'Другое задание занимает GPU; дождитесь его завершения' : model?.kind === 'image' ? runningImage ? 'Можно отменить текущее задание' : 'Изображение сохраняется на этом Mac' : working ? chatActivity?.phase || 'Выполняется действие…' : 'Чаты и промпты сохраняются на этом Mac';
   renderActivity();
 }
 async function scan() {
-  try { listing = await api('/api/catalog?refresh=1'); $('engines').textContent = listing.runtimes.map(r => r.name).join(' · ') || 'Движки не найдены'; $('roots').replaceChildren(...listing.roots.map(root => {const d=document.createElement('div'); d.textContent=root; return d})); if (!current()) await choose(activeModel() || listing.models.find(m=>m.id===localStorage.getItem('selected-model'))?.id || listing.models[0]?.id); else renderModels(); }
+  try { listing = await api('/api/catalog?refresh=1'); $('engines').textContent = listing.runtimes.map(r => r.name).join(' · ') || 'Движки не найдены'; $('roots').replaceChildren(...listing.roots.map(root => {const d=document.createElement('div'); d.textContent=root; return d})); if (!current()) await choose((promptBusy() ? 'qwen-image-21' : activeModel()) || listing.models.find(m=>m.id===localStorage.getItem('selected-model'))?.id || listing.models[0]?.id); else renderModels(); renderPromptModels(); }
   catch (error) { notice(error.message); }
 }
 async function refresh() {
-  try { state = await api('/api/status'); $('connection').textContent = state.reserved ? 'GPU занят другим заданием' : 'Локально · ' + (state.mode === 'idle' ? 'Память свободна' : state.mode === 'conflict' || state.mode === 'external_image' ? 'Внешний процесс' : 'На связи'); $('memory').textContent = `Свободно ${bytes(state.system.free_bytes)} · swap ${bytes(state.system.swap_used_bytes)} · memory pressure ${state.system.pressure_free_percent ?? '—'}%`; renderModels(); updateControls(); if (state.job?.state === 'done' && displayedImage !== state.job.id && current()?.kind === 'image') {await loadGallery();renderConversation();} if (state.runtime?.state === 'failed' && state.runtime?.error && selected === activeModel()) notice(state.runtime.error); }
+  try { state = await api('/api/status'); promptJob=state.prompt_enhancement || promptJob; $('connection').textContent = state.reserved ? 'GPU занят другим заданием' : 'Локально · ' + (state.mode === 'idle' ? 'Память свободна' : state.mode === 'conflict' || state.mode === 'external_image' ? 'Внешний процесс' : 'На связи'); $('memory').textContent = `Свободно ${bytes(state.system.free_bytes)} · swap ${bytes(state.system.swap_used_bytes)} · memory pressure ${state.system.pressure_free_percent ?? '—'}%`; renderModels(); updateControls(); if (state.job?.state === 'done' && displayedImage !== state.job.id && current()?.kind === 'image') {await loadGallery();renderConversation();} if (state.runtime?.state === 'failed' && state.runtime?.error && selected === activeModel()) notice(state.runtime.error); }
   catch (error) { $('connection').textContent = 'Нет связи'; notice(error.message); }
 }
 async function action(path, body) {
@@ -248,12 +276,13 @@ $('new-chat').onclick=startNewChat;
 $('chat-history').onchange=async()=>{const id=$('chat-history').value;try{if(!records.has(id)){const entry=await api('/api/workspace/entry?id='+encodeURIComponent(id));records.set(id,{...entry,kind:'chat'})}chats.set(selected,id);sessions.delete(selected);renderConversation();if(records.get(id).value.status==='streaming')notice('Предыдущий ответ был прерван. Сохранён полученный текст.');else notice('');}catch(error){notice(error.message)}};
 $('retry-save').onclick=async()=>{for(const record of [...unsaved.values()])await persist(record).catch(()=>{});};
 $('cancel-chat').onclick=()=>controller?.abort();
-for(const id of ['prompt','system-prompt','max-tokens','temperature','size','steps','seed','cache','backend'])$(id).addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(()=>{draftTimer=null;saveDraft().catch(()=>{})},500)});
+for(const id of [...draftFields,'auto-enhance'])$(id).addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(()=>{draftTimer=null;saveDraft().catch(()=>{})},500);updateControls()});
 window.addEventListener('beforeunload',event=>{if(draftTimer || saveCount || unsaved.size || working){event.preventDefault();event.returnValue='';}});
 $('compose').onsubmit = async event => {
   event.preventDefault(); const prompt = $('prompt').value.trim(), model = current();
   if (!prompt || !model || working) return;
-  if (model.kind === 'image') { const [width,height]=$('size').value.split('x').map(Number); await action('/api/image/jobs', {prompt,width,height,steps:Number($('steps').value),seed:Number($('seed').value),cache:$('cache').value}); renderConversation(); return; }
+  if (model.kind === 'image' && ($('auto-enhance').checked || Number($('series-count').value)>1)) { await startPromptWorkflow(true); return; }
+  if (model.kind === 'image') { const [width,height]=$('size').value.split('x').map(Number); await action('/api/image/jobs', {prompt,width,height,steps:Number($('steps').value),seed:Number($('seed').value),cache:$('cache').value,prompt_expansion:drafts.get(selected)?.value.expansion?.prompt===prompt ? {original_prompt:drafts.get(selected).value.expansion.original_prompt,model:drafts.get(selected).value.expansion.model} : undefined}); renderConversation(); return; }
   const id = selected, record=currentRecord(), history = record.value.messages; if(history.length>=98){notice('Достигнут лимит истории. Создайте новый чат; этот разговор сохранён.');return;} history.push({role:'user', content:prompt}); $('prompt').value=''; working=true; updateControls(); renderConversation(); notice('');
   try {
     if(record.value.title==='Новый чат')record.value.title=Array.from(prompt).slice(0,80).join('');
@@ -289,6 +318,63 @@ $('compose').onsubmit = async event => {
   }
   finally {clearTimeout(chatSaveTimer);chatSaveTimer=null;controller=null;await persist(record).catch(()=>{});await saveDraft().catch(()=>{});chatActivity=null; working=false; if (selected===id) renderConversation(); updateControls(); }
 };
+function renderPromptModels() {
+  const previous=$('prompt-model').dataset.chosen || $('prompt-model').value;
+  const models=listing.models.filter(m=>m.kind!=='image' && m.available).sort((a,b)=>(a.weight_bytes || Infinity)-(b.weight_bytes || Infinity));
+  $('prompt-model').replaceChildren(...models.map(m=>new Option(m.name,m.id)));
+  if(models.some(m=>m.id===previous))$('prompt-model').value=previous;
+  else $('prompt-model').value=models.find(m=>/qwen3-4b/i.test(m.name))?.id || models[0]?.id || '';
+  $('prompt-model').dataset.chosen=$('prompt-model').value;
+}
+function showPromptPreview(value) {
+  $('prompt-preview').hidden=!value;
+  $('prompt-original').textContent=value ? 'Исходный замысел: '+value.original_prompt : '';
+  $('prompt-result').textContent=value?.prompt || '';
+}
+async function startPromptWorkflow(generate) {
+  const prompt=$('prompt').value.trim(); if(!prompt || working || promptBusy())return;
+  const expand=!generate || $('auto-enhance').checked;
+  if(expand && !$('prompt-model').value){notice('Выберите доступную текстовую модель.');return;}
+  const [width,height]=$('size').value.split('x').map(Number);
+  working=true;updateControls();notice('');
+  try {
+    await saveDraft();
+    promptJob=await api(expand ? '/api/prompt/enhance' : '/api/image/series','POST',{
+      prompt,model:$('prompt-model').value,generate,count:generate ? Number($('series-count').value) : 1,
+      image:{width,height,steps:Number($('steps').value),seed:Number($('seed').value),cache:$('cache').value}});
+    appliedPromptJob=null;showPromptPreview(promptJob);$('prompt-preview').open=true;
+  }catch(error){notice(error.message)}finally{working=false;updateControls()}
+}
+async function refreshPrompt() {
+  if(promptPollBusy)return;promptPollBusy=true;
+  try {
+    const result=await api('/api/prompt/status');promptJob=result.job;
+    if(current()?.kind==='image' && promptJob) {
+      if(promptBusy())showPromptPreview(promptJob);
+      if(!promptBusy() && appliedPromptJob!==promptJob.id) {
+        appliedPromptJob=promptJob.id;
+        if(promptJob.state==='done' && promptJob.expand) {
+          showPromptPreview(promptJob);
+          // Apply to the draft only if it still contains the brief for this workflow.
+          if($('prompt').value.trim()===promptJob.original_prompt) {
+            if(!promptJob.generate){$('prompt').value=promptJob.prompt;$('auto-enhance').checked=false;}
+            const draft=captureDraft();draft.value.expansion={original_prompt:promptJob.original_prompt,prompt:promptJob.prompt,model:promptJob.model_name};await persist(draft);
+          }
+        }
+        if(promptJob.state==='failed' || promptJob.state==='interrupted')notice('Подготовка остановлена: '+promptJob.error);
+        else if(promptJob.state==='cancelled')notice(`Остановлено. Готово изображений: ${promptJob.completed || 0}.`);
+        else if(!promptJob.generate)notice('Промпт готов. Можно отредактировать его и создать изображение.');
+        else notice(`Серия готова: ${promptJob.completed} из ${promptJob.count}.`);
+        await refresh();await loadGallery();renderConversation();
+      }
+    }
+    updateControls();
+  }catch(error){if(promptBusy())notice('Не удалось обновить подготовку: '+error.message)}finally{promptPollBusy=false}
+}
+$('prompt-model').onchange=()=>{$('prompt-model').dataset.chosen=$('prompt-model').value};
+$('enhance').onclick=()=>startPromptWorkflow(false);
+$('cancel-prompt').onclick=async()=>{try{promptJob=await api('/api/prompt/cancel','POST',{});updateControls()}catch(error){notice(error.message)}};
+$('restore-idea').onclick=()=>{const value=drafts.get(selected)?.value.expansion;if(value){$('prompt').value=value.original_prompt;saveDraft().catch(()=>{});notice('Исходный замысел восстановлен.')}};
 async function streamReply(body,onDelta) {
   const response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:typeof controller!=='undefined'?controller?.signal:undefined});
   if(!response.ok) {const error=await response.json(); throw Error(error.error || response.statusText);}
@@ -312,7 +398,7 @@ async function streamReply(body,onDelta) {
 }
 $('prompt').onkeydown = event => {if ((event.ctrlKey || event.metaKey) && event.key==='Enter' && !$('send').disabled) {event.preventDefault(); $('compose').requestSubmit();}};
 $('load-logs').onclick = async () => {try {$('logs').textContent=(await api('/api/logs?service='+$('log-service').value)).text || 'Лог пуст';}catch(error){notice(error.message)}};
-(async()=>{try{await loadWorkspace();await loadGallery();await refresh();await scan();updateControls();await refreshProgress();}catch(error){notice('Не удалось загрузить историю: '+error.message);$('save-status').textContent='История недоступна';}})(); setInterval(refresh,8000); setInterval(refreshProgress,1000);
+(async()=>{try{await loadWorkspace();await loadGallery();await refresh();await scan();updateControls();await refreshProgress();await refreshPrompt();}catch(error){notice('Не удалось загрузить историю: '+error.message);$('save-status').textContent='История недоступна';}})(); setInterval(refresh,8000); setInterval(refreshProgress,1000); setInterval(refreshPrompt,1000);
 let deletionPlan = null;
 $('delete-model').onclick = async () => {
   working = true; updateControls(); notice('');

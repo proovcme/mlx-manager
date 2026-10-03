@@ -111,6 +111,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._static("app.js", "text/javascript; charset=utf-8")
             elif path == "/api/status":
                 self._json(200, MANAGER.status())
+            elif path == "/api/prompt/status":
+                self._json(200, {"job": MANAGER._enhancer.snapshot()})
             elif path == "/api/catalog":
                 query = parse_qs(urlsplit(self.path).query)
                 self._json(200, MANAGER.model_catalog(refresh=query.get("refresh") == ["1"]))
@@ -165,6 +167,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/models/trash":
                 spec = self._body()
                 self._json(200, MANAGER.trash_model(spec.get("token"), spec.get("confirmation")))
+            elif path == "/api/prompt/enhance":
+                self._json(202, MANAGER._enhancer.start(self._body()))
+            elif path == "/api/image/series":
+                spec = self._body()
+                spec["generate"] = True
+                self._json(202, MANAGER._enhancer.start(spec, expand=False))
+            elif path == "/api/prompt/cancel":
+                self._json(200, MANAGER._enhancer.cancel())
             elif path == "/api/chat":
                 spec = self._body()
                 if spec.get("stream"):
