@@ -19,3 +19,11 @@ config.local.json
 outputs/
 local/
 .DS_Store
+*.egg-info/
+build/
+dist/
+.cache/
+*.jsonl
+.history/
+!docs/screenshots/*.png
+!docs/screenshots/*.jpg
