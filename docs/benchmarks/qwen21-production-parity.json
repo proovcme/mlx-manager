@@ -1,0 +1,39 @@
+{
+  "scope": "Full pipeline parity check; one cold run per mode, no warm-up; timings are not a benchmark median",
+  "width": 1152,
+  "height": 768,
+  "steps": 20,
+  "seed": 1977,
+  "cache": "off",
+  "mlx": "0.32.2",
+  "snapshot_revision": "4db4e8c0c0e7a1debf0320415bec8388e888494c",
+  "runs": [
+    {
+      "mode": "baseline",
+      "seconds": 395.6427109159995,
+      "peak_mlx_gib": 17.068786311894655,
+      "stages": {
+        "prompt_encoding": 1.0402485419763252,
+        "denoising": 384.8830620839726,
+        "vae_decode": 5.526632624969352
+      }
+    },
+    {
+      "mode": "accelerated",
+      "seconds": 375.87041745800525,
+      "peak_mlx_gib": 17.214843939989805,
+      "stages": {
+        "prompt_encoding": 1.0454146250267513,
+        "denoising": 364.42778699996416,
+        "vae_decode": 6.481708541978151
+      }
+    }
+  ],
+  "latents_bit_exact": true,
+  "pixels_bit_exact": true,
+  "pixel_sha256": "63e134c1febcd11675f5543763e0d59346fe1c639af01ee2187bf4fe18e49fe3",
+  "mflux": "0.20.0",
+  "tokens": 207,
+  "prompt_file": "image-kit/experiments/prompts/teapot.txt",
+  "raw_latent_bytes_identical": true
+}
