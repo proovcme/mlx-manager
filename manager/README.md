@@ -94,11 +94,8 @@ Path overrides also support `MLX_MANAGER_<NAME>` environment variables, such
 as `MLX_MANAGER_DATA_ROOT` and `MLX_MANAGER_IMAGE_ROOT`. Environment values take
 precedence over the local JSON file. `MODEL_ROOTS` is a JSON-only list.
 
-An optional legacy Mara/Guardian profile can be configured through `MARA_MODEL`,
-`MARA_LABEL`, `MARA_PLIST`, `MARA_LOG`, `GUARDIAN_LABEL` and `GUARDIAN_PLIST`.
-Its local ports are 1919 and 1923; the stable proxied routes are `/v1/models`,
-`/v1/chat/completions` and `/guardian/sessions`. This integration is optional:
-ordinary models run through the managed inference server on port 1925.
+Selected text models run through the managed local inference server. It exposes
+the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes.
 
 ## CLI and checks
 
