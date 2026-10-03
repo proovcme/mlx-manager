@@ -92,7 +92,7 @@ history, machine paths or model weights.
 .venv/bin/python run.py check           # both Python suites + SSE parser
 ```
 
-**76 Python tests** pass across both components (29 manager + 47 image engine),
+**95 Python tests** pass across both components (40 manager + 55 image engine),
 plus JavaScript syntax and SSE parser checks. These checks need the installed
 Image Kit dependencies; they do not download models or run a GPU benchmark.
 The optional [CI template](ci/checks.yml.example) is provided separately.
@@ -146,3 +146,5 @@ not the dedicated PE checkpoint. A rewrite adds creative details and can alter t
 result; review it when exact fidelity matters. Inference settings remain under your control.
 Original and expanded prompts stay in local history. Failed or truncated rewrites
 stop the workflow instead of being passed to the image model.
+
+[Exact acceleration measurements](docs/acceleration.md) · [Reference-image investigation](docs/reference-images.md)

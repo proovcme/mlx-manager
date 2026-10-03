@@ -56,3 +56,6 @@ def image_snapshot() -> Path | None:
     if not all((snapshot/part/'model.safetensors').is_file() for part in required):
         return None
     return snapshot
+
+# Conditioning reuse changes no model precision, sampling or denoising steps.
+IMAGE_ACCELERATION = str(setting("IMAGE_ACCELERATION", True)).lower() in ("true", "1", "yes")

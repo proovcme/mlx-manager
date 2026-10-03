@@ -1,0 +1,127 @@
+{
+  "scope": "full pipeline including model loading, encoding, denoising, decoding and saving; 512x512, 4 steps, cache off",
+  "single": [
+    {
+      "mode": "fast",
+      "seed": 1977,
+      "seconds": 28.733990458014887,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.045596458017826,
+        "denoising": 20.62546062504407,
+        "vae_decode": 1.8064646249986254
+      }
+    },
+    {
+      "mode": "baseline",
+      "seed": 1977,
+      "seconds": 31.254160958051216,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.061434083036147,
+        "denoising": 24.442246709018946,
+        "vae_decode": 1.7762783750076778
+      }
+    },
+    {
+      "mode": "baseline",
+      "seed": 1977,
+      "seconds": 31.370293291984126,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.079088624974247,
+        "denoising": 24.525340666004922,
+        "vae_decode": 1.78220679203514
+      }
+    },
+    {
+      "mode": "fast",
+      "seed": 1977,
+      "seconds": 27.624074541963637,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.0816090830485336,
+        "denoising": 20.719726124953013,
+        "vae_decode": 1.79556566698011
+      }
+    },
+    {
+      "mode": "fast",
+      "seed": 1977,
+      "seconds": 31.677693750010803,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.054358166991733,
+        "denoising": 20.845095208031125,
+        "vae_decode": 1.7727284579887055
+      }
+    },
+    {
+      "mode": "baseline",
+      "seed": 1977,
+      "seconds": 31.661083749961108,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.0632944999961182,
+        "denoising": 24.72836999996798,
+        "vae_decode": 1.7827352909953333
+      }
+    }
+  ],
+  "series": [
+    {
+      "mode": "baseline",
+      "seed": 1978,
+      "seconds": 31.40237037499901,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.0566735420143232,
+        "denoising": 24.331447415985167,
+        "vae_decode": 1.8160710000083782
+      }
+    },
+    {
+      "mode": "baseline",
+      "seed": 1979,
+      "seconds": 30.933110083977226,
+      "peak_gib": 5.86618584394455,
+      "stages": {
+        "prompt_encoding": 1.0472065830253996,
+        "denoising": 24.04184595803963,
+        "vae_decode": 1.767385374987498
+      }
+    },
+    {
+      "mode": "fast",
+      "seed": 1978,
+      "seconds": 27.333236625010613,
+      "peak_gib": 9.706300910562277,
+      "stages": {
+        "prompt_encoding": 2.78513233398553,
+        "transformer_loading": 1.202648957958445,
+        "denoising": 20.241383125016,
+        "vae_loading": 0.3325858329772018,
+        "vae_decode": 2.246356540999841
+      }
+    },
+    {
+      "mode": "fast",
+      "seed": 1979,
+      "seconds": 23.08185529097682,
+      "peak_gib": 9.706300929188728,
+      "stages": {
+        "prompt_encoding": 6.791029591113329e-06,
+        "denoising": 20.319993291050196,
+        "vae_decode": 1.762240957992617
+      }
+    }
+  ],
+  "pixels_bit_exact": true,
+  "warmup_single_per_mode": 1,
+  "measured_single_reps": 3,
+  "series_reps": 1,
+  "series_images": 2,
+  "mlx": "0.32.2",
+  "mflux": "0.20.0",
+  "tokens": 207
+}
