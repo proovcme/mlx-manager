@@ -34,7 +34,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     mode = sub.add_parser("mode")
-    mode.add_argument("target", choices=("idle", "mara", "image"))
+    mode.add_argument("target", choices=("idle", "external_chat", "image"))
     image = sub.add_parser("image")
     image.add_argument("prompt")
     image.add_argument("--width", type=int, default=1024)
@@ -45,7 +45,7 @@ def main() -> None:
     sub.add_parser("job")
     sub.add_parser("cancel")
     logs = sub.add_parser("logs")
-    logs.add_argument("service", choices=("mara", "image", "manager"))
+    logs.add_argument("service", choices=("external_chat", "image", "manager"))
     args = parser.parse_args()
     if args.command == "status":
         result = call("GET", "/api/status")

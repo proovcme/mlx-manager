@@ -1,4 +1,5 @@
 """Matched local-weight pipeline and resident-series parity check; no downloads."""
+from experiments.manager_config import add_arguments, local_snapshot
 import time,json,fcntl,gc,argparse
 from pathlib import Path
 from experiments.benchmark_qwen21 import require_idle,PROMPT
@@ -10,17 +11,18 @@ import mlx.core as mx
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--prompt-file',type=Path)
 parser.add_argument('--output',type=Path,default=Path('local/pipeline-parity'))
+add_arguments(parser)
 args=parser.parse_args()
 out=args.output;out.mkdir(parents=True,exist_ok=True)
-require_idle('http://127.0.0.1:1924')
-lock=(Path.home()/'.local/share/mlx-manager/heavy.lock').open('a+');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+require_idle(args.manager_url)
+lock=args.lock_path.open('a+');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 prompt=args.prompt_file.read_text().strip() if args.prompt_file else PROMPT
 report={'scope':'full pipeline including model loading, encoding, denoising, decoding and saving; 512x512, 4 steps, cache off','single':[],'series':[]}
 def run(mode,seed,name,session=None):
  job=Job(1,prompt,out/(name+'.png'),512,512,4,seed,1.0)
  stages={};gc.collect();mx.clear_cache();mx.reset_peak_memory();began=time.monotonic()
  runner=session.run_jobs if session else engine.run_jobs
- kwargs={} if session else {'acceleration':mode=='fast'}
+ kwargs={'model_path':local_snapshot()} if session else {'acceleration':mode=='fast','model_path':local_snapshot()}
  result=runner([job],cache_config=None,progress=False,show_library_progress=False,on_stage_timing=lambda i,n,t:stages.update({n:t}),**kwargs)
  if result.failed or result.interrupted:raise RuntimeError(str(result))
  row=dict(mode=mode,seed=seed,seconds=time.monotonic()-began,peak_gib=mx.get_peak_memory()/2**30,stages=stages)

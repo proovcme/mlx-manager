@@ -1,4 +1,5 @@
 """Check native-size resident memory and prompt reuse against staged reference pixels."""
+from experiments.manager_config import add_arguments, local_snapshot
 import argparse
 import fcntl
 import gc
@@ -22,14 +23,15 @@ def main():
     parser.add_argument('--next-steps',type=int,default=4)
     parser.add_argument('--reference',type=Path,default=Path('local/production-parity/baseline.png'))
     parser.add_argument('--output',type=Path,default=Path('local/production-series'))
+    add_arguments(parser)
     args=parser.parse_args()
     prompt=args.prompt_file.read_text().strip() if args.prompt_file else PROMPT
     if not args.reference.is_file():raise FileNotFoundError('Run check_production_parity with the same prompt first')
     args.output.mkdir(parents=True,exist_ok=True)
-    require_idle('http://127.0.0.1:1924')
-    with (Path.home()/'.local/share/mlx-manager/heavy.lock').open('a+') as lock:
+    require_idle(args.manager_url)
+    with args.lock_path.open('a+') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        require_idle('http://127.0.0.1:1924')
+        require_idle(args.manager_url)
         report=dict(scope='Native-size resident series parity and memory check; timings are not medians',width=1152,height=768,cache='off',mlx=mx.__version__,runs=[])
         def run(mode,steps,seed,index,session=None):
             stages={}
@@ -44,13 +46,13 @@ def main():
             def step(i,n,total):
                 if n==1 or n%5==0 or n==total:
                     print(f'{mode}: {n}/{total}',flush=True)
-                    require_idle('http://127.0.0.1:1924')
+                    require_idle(args.manager_url)
             job=Job(index,prompt,args.output/(mode+'.png'),1152,768,steps,seed,1.0)
             gc.collect();mx.clear_cache();mx.reset_peak_memory()
             began=time.monotonic()
             runner=session.run_jobs if session else engine.run_jobs
             with patch.object(engine,'_save_png',side_effect=checked_save):
-                result=runner([job],cache_config=None,progress=False,show_library_progress=False,on_step=step,on_stage_timing=lambda i,n,t:stages.update({n:t}))
+                result=runner([job],model_path=local_snapshot(),cache_config=None,progress=False,show_library_progress=False,on_step=step,on_stage_timing=lambda i,n,t:stages.update({n:t}))
             if result.failed or result.interrupted or len(result.completed)!=1:raise RuntimeError(str(result))
             report['runs'].append(dict(mode=mode,steps=steps,seed=seed,decoded_values_finite=finite,seconds=time.monotonic()-began,peak_mlx_gib=mx.get_peak_memory()/2**30,stages=stages))
             print(json.dumps(report['runs'][-1]),flush=True)

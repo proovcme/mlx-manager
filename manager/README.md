@@ -71,10 +71,7 @@ Do not expose its port to a network.
 
 ## Models and configuration
 
-Default discovery roots: the Hugging Face cache (`HF_HUB_CACHE` / `HF_HOME`
-are respected), `~/models`, `~/.omlx/models`, and `~/.lmstudio/models`.
-Incomplete shard sets and embedding models are excluded. Symlink aliases share
-one model identity. Scanning is bounded to model directories, not documents.
+Model locations are read from oMLX settings (including a relocated app data directory), MLX/oMLX LaunchAgents and running-server model arguments, Hugging Face environment settings, and `MODEL_ROOTS`. Standard `~/models` and `~/.lmstudio/models` folders are fallbacks. See [model discovery](../docs/model-discovery.md). Incomplete shard sets and embedding models are excluded; symlink aliases share one identity. Scanning remains bounded to model directories.
 
 Create an ignored `config.local.json` in this checkout for extra roots or an
 image engine installation. Values may use `~`:
@@ -97,7 +94,7 @@ numerical behavior are delegated unchanged to that engine.
 
 Path overrides also support `MLX_MANAGER_<NAME>` environment variables, such
 as `MLX_MANAGER_DATA_ROOT` and `MLX_MANAGER_IMAGE_ROOT`. Environment values take
-precedence over the local JSON file. `MODEL_ROOTS` is a JSON-only list.
+precedence over the local JSON file. `MLX_MANAGER_MODEL_ROOTS` accepts a JSON array of directory paths. `MLX_MANAGER_OMLX_EXECUTABLE` and `MLX_MANAGER_MLX_EXECUTABLE` can select runtime executables when they are not on `PATH`.
 
 Selected text models run through the managed local inference server. It exposes
 the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes.
@@ -122,9 +119,7 @@ this manager can bypass its file lock; conflict detection is a guard, not OS
 resource isolation. Interrupting a text stream closes the client connection;
 how promptly inference stops depends on the selected engine.
 
-`ci/checks.yml.example` is an optional GitHub Actions template. Copy it to
-`.github/workflows/checks.yml` with repository workflow permissions to enable
-the same checks on macOS CI. It is not installed automatically.
+GitHub Actions is enabled in [checks.yml](../.github/workflows/checks.yml). Manager tests run on Linux; image contracts run on macOS. Metal parity requires a GPU and is explicitly skipped on hosted runners without one. Full parity tests run locally on Apple Silicon before publishing.
 
 ## From an idea to an image series
 
@@ -150,3 +145,5 @@ not the dedicated PE checkpoint. A rewrite adds creative details and can alter t
 result; review it when exact fidelity matters. Inference settings remain under your control.
 Original and expanded prompts stay in local history. Failed or truncated rewrites
 stop the workflow instead of being passed to the image model.
+
+Optional external services use a [neutral, disabled-by-default adapter](../docs/external-chat.md). Memory diagnostics refresh independently of workload controls; their age is reported in the status API. Stored conversations remain readable after a model is removed.

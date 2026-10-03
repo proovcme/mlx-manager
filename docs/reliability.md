@@ -55,3 +55,7 @@ These changes do not alter weights, precision, seed, scheduler or denoising step
 Published numerical parity and timing evidence remains in
 [the acceleration report](acceleration.md). No new speedup percentage is claimed
 from these lifecycle tests.
+
+## Web-search validation
+
+The optional search feature adds ten manager tests, bringing that suite to 58. Tests cover provider failure without a fabricated answer, unsafe source URLs, preserved history turns, worker cancellation and deadlines, streaming metadata and non-streaming responses. SSE parser checks cover search metadata as well as byte fragmentation and UTF-8. A live query returned five sources and a completed local-model answer with numbered references. An isolated UI replay of that live trace verified clickable sources, saved history and toggle restoration after reload.

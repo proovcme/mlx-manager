@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import mlx.core as mx
 from mlx import nn
+
+if not mx.metal.is_available():
+    raise unittest.SkipTest("Metal parity requires an Apple Silicon GPU; hosted CPU contracts are checked separately")
 from mflux.models.qwen21.model.qwen21_transformer.qwen21_attention import Qwen21Attention
 from mflux.models.qwen21.model.qwen21_transformer.qwen21_transformer import Qwen21Transformer
 

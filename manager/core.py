@@ -24,6 +24,9 @@ from store import Store
 from runtime import ModelRuntime, PORT as MODEL_PORT
 from prompt_enhancer import PromptEnhancer
 from transport import open_stream
+from external_chat import ExternalChatMixin
+from telemetry import Telemetry
+import web_search
 
 
 class ManagerError(Exception):
@@ -39,7 +42,7 @@ def run(args: list[str], timeout: float = 15) -> subprocess.CompletedProcess[str
                           check=False)
 
 
-class Manager:
+class Manager(ExternalChatMixin):
     def __init__(self):
         config.DATA_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
         config.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -51,6 +54,7 @@ class Manager:
         self._heavy = open(config.DATA_ROOT / "heavy.lock", "a+")
         self._heavy_held = False
         self._mu = threading.RLock()
+        self._telemetry = Telemetry()
         self._active_chat = 0
         self._chat_requests = {}
         self._cancelled_chats = {}
@@ -132,29 +136,29 @@ class Manager:
     def _reconcile(self) -> None:
         runtime = getattr(self, "_runtime", None)
         if runtime and runtime.running():
-            self._mode = "conflict" if memory.listener_pid(1919) or memory.image_processes() else "model"
+            self._mode = "conflict" if self._external_listener() or memory.image_processes() else "model"
             self._observe_lock()
             return
         if memory.listener_pid(MODEL_PORT):
             self._mode = "conflict"
             return
-        listener = memory.listener_pid(1919)
-        mara = listener and listener == memory.launch_agent_pid(config.MARA_LABEL)
+        listener = self._external_listener()
+        external_chat = listener and listener == memory.launch_agent_pid(config.EXTERNAL_LABEL)
         worker_pid = (self._worker.pid if self._worker and
                       self._worker.poll() is None else None)
         images = [item for item in memory.image_processes()
                   if item["pid"] != worker_pid]
-        if listener and not mara:
+        if listener and not external_chat:
             self._mode = "conflict"
             self._observe_lock()
-        elif mara and images:
+        elif external_chat and images:
             self._mode = "conflict"
             self._observe_lock()
-        elif mara and worker_pid:
+        elif external_chat and worker_pid:
             self._mode = "conflict"
             self._observe_lock()
-        elif mara:
-            self._mode = "conflict" if self._mode == "image" else "mara"
+        elif external_chat:
+            self._mode = "conflict" if self._mode == "image" else "external_chat"
             self._observe_lock()
         elif images:
             self._mode = "external_image"
@@ -166,40 +170,43 @@ class Manager:
             self._mode = "idle"
             self._unlock_heavy()
 
-    def _guardian_stats(self) -> dict | None:
+    def _proxy_stats(self) -> dict | None:
+        if not config.EXTERNAL_ENABLED or not config.STATS_PATH:
+            return None
         try:
-            with urllib.request.urlopen(config.GUARDIAN_V2 + "/guardian/stats", timeout=1) as r:
+            with urllib.request.urlopen(config.PROXY_ENDPOINT + config.STATS_PATH, timeout=1) as r:
                 return json.load(r)
         except (OSError, ValueError):
             return None
 
     def status(self) -> dict:
+        metrics = self._telemetry.snapshot(self._collect_metrics)
         with self._mu:
             self._reconcile()
-            listener = memory.listener_pid(1919)
-            mara_pid = (listener if listener == memory.launch_agent_pid(config.MARA_LABEL)
-                        else None)
-            images = memory.image_processes()
             image_pid = self._worker.pid if self._worker and self._worker.poll() is None else None
-            return {
+            return {**metrics,
                 "mode": self._mode, "heavy_lock": self._heavy_held,
-                "data_mounted": config.MARA_MODEL.is_dir(),
-                "mara_model_available": config.MARA_MODEL.is_dir(),
+                "workload_lock_path": str(config.DATA_ROOT / "heavy.lock"),
+                "external_chat_model_available": config.EXTERNAL_ENABLED and config.EXTERNAL_MODEL.is_dir(),
+                "external_chat_sessions": bool(config.SESSION_PATH and config.SESSION_HEADER),
                 "image_snapshot_available": config.image_snapshot() is not None,
-                "mara": {"pid": mara_pid, "port": 1919,
-                         "other_listener_pid": listener if listener != mara_pid else None,
-                         **memory.vmmap_summary(mara_pid)},
-                "image": {"pid": image_pid, "processes": images,
-                          **memory.vmmap_summary(image_pid)},
-                "system": memory.system_memory(),
-                "guardian": self._guardian_stats(),
+                "image": {**metrics["image"], "pid": image_pid},
                 "active_chat_requests": self._active_chat,
                 "prompt_enhancement": self._enhancer.snapshot(),
-                "job": dict(self._job) if self._job else None,
-                "at": now(),
-                "runtime": self._runtime.status(),
-                "reserved": self._external_reservation(),
+                "job": dict(self._job) if self._job else None, "at": now(),
+                "runtime": self._runtime.status(), "reserved": self._external_reservation(),
             }
+
+    def _collect_metrics(self):
+        listener = self._external_listener()
+        pid = listener if listener == memory.launch_agent_pid(config.EXTERNAL_LABEL) else None
+        with self._mu:
+            image_pid = self._worker.pid if self._worker and self._worker.poll() is None else None
+        return {"external_chat": {"pid": pid, "port": config.EXTERNAL_PORT,
+                    "other_listener_pid": listener if listener != pid else None,
+                    **memory.vmmap_summary(pid)},
+                "image": {"processes": memory.image_processes(), **memory.vmmap_summary(image_pid)},
+                "system": memory.system_memory(), "proxy": self._proxy_stats()}
 
     def _external_reservation(self) -> bool:
         if self._heavy_held:
@@ -229,9 +236,13 @@ class Manager:
 
     def model_catalog(self, refresh=False):
         with self._mu:
-            if self._catalog is None or refresh:
-                self._catalog = catalog.discover()
-            return self._catalog
+            cached = self._catalog
+        if cached is not None and not refresh:
+            return cached
+        discovered = catalog.discover()
+        with self._mu:
+            self._catalog = discovered
+            return discovered
 
     def _deletion_allowed(self):
         self._prompt_guard()
@@ -306,8 +317,8 @@ class Manager:
             backend = model["backends"][0]
         if backend not in model["backends"]:
             raise ManagerError("This backend does not support the selected model")
-        if model.get("mara") and backend == "omlx":
-            return self.set_mode("mara")
+        if model.get("external_chat") and backend == "omlx":
+            return self.set_mode("external_chat")
         with self._mu:
             self._prompt_guard()
             self._reconcile()
@@ -319,7 +330,7 @@ class Manager:
                 raise ManagerError("Selected model has active requests")
             self._lock_heavy()
             try:
-                self._stop_mara()
+                self._stop_external()
                 self._runtime.stop()
                 executable = next(r["executable"] for r in listing["runtimes"] if r["id"] == backend)
                 result = self._runtime.start(model, backend, executable)
@@ -331,6 +342,8 @@ class Manager:
 
     @staticmethod
     def validate_chat(spec):
+        if not isinstance(spec.get("web_search", False), bool):
+            raise ManagerError("Invalid web search setting")
         messages = spec.get("messages")
         max_tokens = spec.get("max_tokens", 1024)
         temperature = spec.get("temperature", 0.7)
@@ -352,7 +365,7 @@ class Manager:
             self._prompt_guard()
             self._reconcile()
             mode = self._mode
-            if mode not in ("mara", "model"):
+            if mode not in ("external_chat", "model"):
                 raise ManagerError("Start a chat model first")
             if not hasattr(self, '_chat_requests'):
                 self._chat_requests = {}
@@ -360,7 +373,7 @@ class Manager:
                 raise ManagerError('Chat cancelled')
             if request_id in self._chat_requests:
                 raise ManagerError('Chat request already active')
-            control = {'cancelled': threading.Event(), 'socket': None}
+            control = {'cancelled': threading.Event(), 'socket': None, 'search_process': None}
             self._chat_requests[request_id] = control
             self._active_chat += 1
         try:
@@ -373,16 +386,34 @@ class Manager:
                         sock.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+            if spec.get('web_search'):
+                query = web_search.query_for(messages)
+                yield self._chat_event({'type': 'web_search', 'phase': 'searching', 'query': query})
+                def track_search(process):
+                    with self._mu:
+                        control['search_process'] = process
+                        cancelled = control['cancelled'].is_set()
+                    if process is not None and cancelled and process.poll() is None:
+                        try:
+                            process.terminate()
+                        except OSError:
+                            pass
+                result = web_search.search(query, control['cancelled'], track_search)
+                messages = web_search.with_sources(messages, result)
+                self.validate_chat(dict(spec, messages=messages))
+                yield self._chat_event(dict(result, type='web_search', phase='ready'))
+            if control['cancelled'].is_set():
+                raise ManagerError('Chat cancelled')
             if mode == "model":
                 response = self._runtime.open_chat(messages, max_tokens, temperature, stream=True, on_socket=track_socket)
             else:
-                self._ensure_guardian()
-                payload = {"model": "Mara", "messages": messages, "max_tokens": max_tokens,
+                self._ensure_proxy()
+                payload = {"model": config.EXTERNAL_MODEL_ID, "messages": messages, "max_tokens": max_tokens,
                            "temperature": temperature, "stream": True}
                 headers = {"Content-Type": "application/json"}
-                if spec.get("session"):
-                    headers["X-Guardian-Session"] = str(spec["session"])
-                request = urllib.request.Request(config.GUARDIAN_V2 + "/v1/chat/completions",
+                if spec.get("session") and config.SESSION_HEADER:
+                    headers[config.SESSION_HEADER] = str(spec["session"])
+                request = urllib.request.Request(config.PROXY_ENDPOINT + "/v1/chat/completions",
                     data=json.dumps(payload).encode(), headers=headers, method="POST")
                 response = open_stream(request, track_socket)
             with response:
@@ -409,8 +440,14 @@ class Manager:
                 return {'cancelled': False}
             control['cancelled'].set()
             sock = control['socket']
+            search_process = control.get('search_process')
         # Shutdown unblocks a read even when the model emits no more tokens.
         # close() alone can wait on the buffered reader's lock.
+        if search_process is not None and search_process.poll() is None:
+            try:
+                search_process.terminate()
+            except OSError:
+                pass
         if sock is not None:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -418,26 +455,46 @@ class Manager:
                 pass
         return {'cancelled': True}
 
+    @staticmethod
+    def _chat_event(value):
+        return b'data: ' + json.dumps(value, ensure_ascii=False).encode() + b'\n\n'
+
     def chat(self, spec):
+        if spec.get('web_search'):
+            content, reasoning, result, finish = '', '', None, 'stop'
+            for line in self.stream_chat(spec):
+                if not line.startswith(b'data: ') or line.strip() == b'data: [DONE]':
+                    continue
+                chunk = json.loads(line[6:])
+                if chunk.get('error'):
+                    raise ManagerError(str(chunk['error']))
+                if chunk.get('type') == 'web_search' and chunk.get('phase') == 'ready':
+                    result = chunk
+                for choice in chunk.get('choices', []):
+                    delta = choice.get('delta', {})
+                    content += delta.get('content') or ''
+                    reasoning += delta.get('reasoning_content') or delta.get('reasoning') or ''
+                    finish = choice.get('finish_reason') or finish
+            return {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content, 'reasoning_content': reasoning}, 'finish_reason': finish}], 'web_search': result}
         messages, max_tokens, temperature = self.validate_chat(spec)
         with self._mu:
             self._prompt_guard()
             self._reconcile()
             mode = self._mode
-            if mode not in ("mara", "model"):
+            if mode not in ("external_chat", "model"):
                 raise ManagerError("Start a chat model first")
             self._active_chat += 1
         try:
             if mode == "model":
                 return self._runtime.chat(messages, max_tokens, temperature)
-            self._ensure_guardian()
-            payload = {"model": "Mara", "messages": messages, "max_tokens": max_tokens,
+            self._ensure_proxy()
+            payload = {"model": config.EXTERNAL_MODEL_ID, "messages": messages, "max_tokens": max_tokens,
                        "temperature": temperature, "stream": False}
             session = spec.get("session")
             headers = {"Content-Type": "application/json"}
-            if session:
-                headers["X-Guardian-Session"] = str(session)
-            request = urllib.request.Request(config.GUARDIAN_V2 + "/v1/chat/completions",
+            if session and config.SESSION_HEADER:
+                headers[config.SESSION_HEADER] = str(session)
+            request = urllib.request.Request(config.PROXY_ENDPOINT + "/v1/chat/completions",
                 data=json.dumps(payload).encode(), headers=headers, method="POST")
             with urllib.request.urlopen(request, timeout=300) as response:
                 return json.load(response)
@@ -450,83 +507,18 @@ class Manager:
         with self._mu:
             self._prompt_guard()
             self._reconcile()
-            if self._mode != "mara":
-                raise ManagerError("Mara is unavailable")
-            self._ensure_guardian()
+            if self._mode != "external_chat":
+                raise ManagerError("External model is unavailable")
+            self._ensure_proxy()
             self._active_chat += 1
 
     def chat_leave(self) -> None:
         with self._mu:
             self._active_chat = max(0, self._active_chat - 1)
 
-    def _stop_mara(self) -> None:
-        listener = memory.listener_pid(1919)
-        if not listener:
-            return
-        if listener != memory.launch_agent_pid(config.MARA_LABEL):
-            raise ManagerError("Port 1919 is not owned by the Mara LaunchAgent")
-        if (self._active_chat or memory.established_connections(1919) or
-                memory.established_connections(1923)):
-            raise ManagerError("Mara has active requests")
-        uid = os.getuid()
-        result = run(["launchctl", "bootout", f"gui/{uid}/{config.MARA_LABEL}"])
-        if result.returncode:
-            raise ManagerError(f"Cannot stop Mara: {result.stderr.strip()}")
-        deadline = time.monotonic() + 30
-        while memory.listener_pid(1919) and time.monotonic() < deadline:
-            time.sleep(0.3)
-        if memory.listener_pid(1919):
-            raise ManagerError("Mara did not stop within 30 seconds")
-
-    def _start_mara(self) -> None:
-        if not config.MARA_MODEL.is_dir():
-            raise ManagerError("Configured Mara model is unavailable")
-        if memory.image_processes():
-            raise ManagerError("Image process is still running")
-        listener = memory.listener_pid(1919)
-        if listener:
-            if listener != memory.launch_agent_pid(config.MARA_LABEL):
-                raise ManagerError("Port 1919 is occupied by another process")
-            self._ensure_guardian()
-            return
-        uid = os.getuid()
-        result = run(["launchctl", "bootstrap", f"gui/{uid}", str(config.MARA_PLIST)])
-        if result.returncode and run(["launchctl", "print",
-                                      f"gui/{uid}/{config.MARA_LABEL}"]).returncode:
-            raise ManagerError(f"Cannot bootstrap Mara: {result.stderr.strip()}")
-        result = run(["launchctl", "kickstart", f"gui/{uid}/{config.MARA_LABEL}"])
-        if result.returncode:
-            raise ManagerError(f"Cannot start Mara: {result.stderr.strip()}")
-        deadline = time.monotonic() + 180
-        while not memory.port_open(1919) and time.monotonic() < deadline:
-            time.sleep(1)
-        if not memory.port_open(1919):
-            raise ManagerError("Mara did not become ready within 180 seconds")
-        self._ensure_guardian()
-
-    def _ensure_guardian(self) -> None:
-        listener = memory.listener_pid(1923)
-        if listener:
-            if listener != memory.launch_agent_pid(config.GUARDIAN_LABEL):
-                raise ManagerError("Port 1923 is occupied by another process")
-            return
-        uid = os.getuid()
-        result = run(["launchctl", "bootstrap", f"gui/{uid}", str(config.GUARDIAN_PLIST)])
-        if result.returncode and run(["launchctl", "print",
-                                      f"gui/{uid}/{config.GUARDIAN_LABEL}"]).returncode:
-            raise ManagerError(f"Cannot bootstrap Guardian: {result.stderr.strip()}")
-        result = run(["launchctl", "kickstart", f"gui/{uid}/{config.GUARDIAN_LABEL}"])
-        if result.returncode:
-            raise ManagerError(f"Cannot start Guardian: {result.stderr.strip()}")
-        deadline = time.monotonic() + 30
-        while not memory.port_open(1923) and time.monotonic() < deadline:
-            time.sleep(0.3)
-        if not memory.port_open(1923):
-            raise ManagerError("Guardian did not become ready within 30 seconds")
-
     def set_mode(self, target: str) -> dict:
-        if target not in ("idle", "mara", "image"):
-            raise ManagerError("Mode must be idle, mara, or image")
+        if target not in ("idle", "external_chat", "image"):
+            raise ManagerError("Mode must be idle, external_chat, or image")
         with self._mu:
             self._prompt_guard()
             self._reconcile()
@@ -539,22 +531,22 @@ class Manager:
                 if self._active_chat or memory.established_connections(MODEL_PORT):
                     raise ManagerError("Selected model has active requests")
                 runtime.stop()
-            if target == "mara":
+            if target == "external_chat":
                 self._lock_heavy()
                 try:
-                    self._start_mara()
+                    self._start_external()
                 except Exception:
                     self._reconcile()
                     raise
-                self._mode = "mara"
+                self._mode = "external_chat"
             elif target == "image":
                 if config.image_snapshot() is None:
                     raise ManagerError("Local Qwen-Image snapshot is incomplete")
                 self._lock_heavy()
-                self._stop_mara()
+                self._stop_external()
                 self._mode = "image"
             else:
-                self._stop_mara()
+                self._stop_external()
                 self._mode = "idle"
                 self._unlock_heavy()
             return {"mode": self._mode, "heavy_lock": self._heavy_held}
@@ -571,8 +563,8 @@ class Manager:
                      and self._job and self._job['state'] == 'done')
             if self._worker and self._worker.poll() is None and not reuse:
                 raise ManagerError("An image job is already running")
-            if memory.listener_pid(1919):
-                raise ManagerError("Mara is still running")
+            if self._external_listener():
+                raise ManagerError("External model is still running")
             snapshot = config.image_snapshot()
             if snapshot is None or not config.IMAGE_PYTHON.is_file():
                 raise ManagerError("Local image model or runtime unavailable")
@@ -742,8 +734,8 @@ class Manager:
     def logs(self, service: str) -> str:
         if service == "model":
             path = config.DATA_ROOT / "model.log"
-        elif service == "mara":
-            path = config.MARA_LOG
+        elif service == "external_chat":
+            path = config.EXTERNAL_LOG
         elif service == "image" and self._job:
             path = Path(self._job["log"])
         elif service == "manager":

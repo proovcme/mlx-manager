@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
+const body={textContent:'',classList:{toggle(){}}},copy={disabled:true};
+const row={querySelector:selector=>selector==='.message-body'?body:selector==='.copy-answer'?copy:null};
+const area={scrollHeight:100,scrollTop:0,querySelector:()=>row};
+let rebuilds=0;
+const context={$:()=>area,nearLatest:()=>false,updateLatestButton(){},renderConversation(){rebuilds++},chatActivity:{phase:'Отвечает…'}};
+vm.createContext(context);
+vm.runInContext(source.slice(source.indexOf('function updateStreamingMessage('),source.indexOf('function nearLatest(')),context);
+for(const content of ['A','AB','ABC'])context.updateStreamingMessage(2,{content});
+assert.equal(body.textContent,'ABC');assert.equal(copy.disabled,false);assert.equal(rebuilds,0);assert.equal(area.scrollTop,0);
+context.updateStreamingMessage(2,{content:''});assert.equal(copy.disabled,true);
+vm.runInContext(source.slice(source.indexOf('function ensureHistoryModel('),source.indexOf('function renderModels(')),context);
+context.listing={models:[]};context.ensureHistoryModel({model:'removed',value:{model_name:'Model archive'}});
+assert.equal(context.listing.models[0].name,'Model archive');assert.equal(context.listing.models[0].available,false);
+context.ensureHistoryModel({model:'removed',value:{}});assert.equal(context.listing.models.length,1);
+console.log('Streaming preserves existing rows and scroll; missing models remain readable: PASS');

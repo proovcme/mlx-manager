@@ -20,6 +20,8 @@ def main():
             subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],cwd=ROOT/directory,check=True)
         subprocess.run(['node','--check','static/app.js'],cwd=ROOT/'manager',check=True)
         subprocess.run(['node','tests/test_stream_parser.js'],cwd=ROOT/'manager',check=True)
+        subprocess.run(['node','tests/test_history_navigation.js'],cwd=ROOT/'manager',check=True)
+        subprocess.run(['node','tests/test_stream_rendering.js'],cwd=ROOT/'manager',check=True)
         return
     if args.tool == 'image':
         cwd = ROOT/'image-kit'

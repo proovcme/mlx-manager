@@ -147,7 +147,7 @@ class PromptEnhancer:
             while True:
                 self.check()
                 runtime = self.manager._runtime.status()
-                if self.manager._mode == 'mara' or runtime['state'] == 'ready':
+                if self.manager._mode == 'external_chat' or runtime['state'] == 'ready':
                     break
                 if runtime['state'] == 'failed':
                     raise RuntimeError(runtime.get('error') or 'Text model failed to start')
