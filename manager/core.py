@@ -21,6 +21,7 @@ import progress
 import ownership
 from store import Store
 from runtime import ModelRuntime, PORT as MODEL_PORT
+from prompt_enhancer import PromptEnhancer
 
 
 class ManagerError(Exception):
@@ -49,6 +50,7 @@ class Manager:
         self._heavy_held = False
         self._mu = threading.RLock()
         self._active_chat = 0
+        self._enhancer = PromptEnhancer(self)
         self.store = Store()
         self._job = self._load_job()
         self._worker = None
@@ -73,6 +75,11 @@ class Manager:
             self.store.image(self._job)
         if self._worker:
             threading.Thread(target=self._watch_job, args=(self._worker,), daemon=True).start()
+
+    def _prompt_guard(self):
+        enhancer = getattr(self, '_enhancer', None)
+        if enhancer and enhancer.busy() and not enhancer.owned():
+            raise ManagerError('Prompt expansion is running; wait or cancel it first')
 
     def _load_job(self) -> dict | None:
         try:
@@ -179,6 +186,7 @@ class Manager:
                 "system": memory.system_memory(),
                 "chat_proxy": self._chat_proxy_stats(),
                 "active_chat_requests": self._active_chat,
+                "prompt_enhancement": self._enhancer.snapshot(),
                 "job": dict(self._job) if self._job else None,
                 "at": now(),
                 "runtime": self._runtime.status(),
@@ -218,6 +226,7 @@ class Manager:
             return self._catalog
 
     def _deletion_allowed(self):
+        self._prompt_guard()
         self._reconcile()
         if (self._mode != "idle" or self._active_chat or self._external_reservation()
                 or self._worker and self._worker.poll() is None):
@@ -277,6 +286,8 @@ class Manager:
                 self._unlock_heavy()
 
     def start_model(self, model_id, backend="auto"):
+        with self._mu:
+            self._prompt_guard()
         listing = self.model_catalog(refresh=True)
         model = next((m for m in listing["models"] if m["id"] == model_id), None)
         if model is None or not model["available"]:
@@ -290,6 +301,7 @@ class Manager:
         if model.get("external_chat") and backend == "omlx":
             return self.set_mode("external_chat")
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             if self._mode in ("conflict", "external_image") or self._active_chat:
                 raise ManagerError("Another workload or chat request is active")
@@ -326,6 +338,7 @@ class Manager:
     def stream_chat(self, spec):
         messages, max_tokens, temperature = self.validate_chat(spec)
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             mode = self._mode
             if mode not in ("external_chat", "model"):
@@ -353,6 +366,7 @@ class Manager:
     def chat(self, spec):
         messages, max_tokens, temperature = self.validate_chat(spec)
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             mode = self._mode
             if mode not in ("external_chat", "model"):
@@ -379,6 +393,7 @@ class Manager:
 
     def chat_enter(self) -> None:
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             if self._mode != "external_chat":
                 raise ManagerError("ExternalChat is unavailable")
@@ -458,6 +473,7 @@ class Manager:
         if target not in ("idle", "external_chat", "image"):
             raise ManagerError("Mode must be idle, external_chat, or image")
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             if self._mode in ("conflict", "external_image"):
                 raise ManagerError("External heavy process detected; resolve it manually")
@@ -490,6 +506,7 @@ class Manager:
 
     def generate(self, spec: dict) -> dict:
         with self._mu:
+            self._prompt_guard()
             self._reconcile()
             if self._mode != "image" or not self._heavy_held:
                 raise ManagerError("Switch to image mode first")
@@ -540,6 +557,17 @@ class Manager:
                          "swap_before_bytes": system["swap_used_bytes"],
                          "swap_after_bytes": None,
                          "min_pressure_free_percent": pressure}
+            series = spec.get('series')
+            if (isinstance(series, dict) and isinstance(series.get('id'), str)
+                    and len(series['id']) == 12 and all(c in '0123456789abcdef' for c in series['id'])
+                    and all(type(series.get(k)) is int for k in ('index','count'))
+                    and 1 <= series['index'] <= series['count'] <= 20):
+                self._job['parameters']['series'] = {k: series[k] for k in ('id','index','count')}
+            expansion = spec.get('prompt_expansion')
+            if isinstance(expansion, dict):
+                self._job['parameters']['prompt_expansion'] = {
+                    k: expansion[k] for k in ('original_prompt','model')
+                    if isinstance(expansion.get(k), str) and len(expansion[k]) <= 4000}
             self._save_job()
             assert worker.stdin is not None
             try:
