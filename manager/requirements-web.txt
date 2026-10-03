@@ -1,0 +1,2 @@
+# Optional web-search worker; the manager itself remains standard-library-only.
+ddgs==9.16.0

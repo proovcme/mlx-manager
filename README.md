@@ -44,6 +44,8 @@ python3.12 -m venv .venv
 Open **http://127.0.0.1:1924/**. Select a model, click **Start**, and write a prompt.
 The composer switches between chat and image controls when you select a model.
 
+For optional **web search with sources** in chat, install `.venv/bin/python -m pip install -r manager/requirements-web.txt` and enable the search toggle. See [setup and privacy boundaries](docs/web-search.md).
+
 For text models, install **[oMLX](https://github.com/jundot/omlx)** or
 **[MLX LM](https://github.com/ml-explore/mlx-lm)** separately. The manager discovers
 existing executables on PATH, in Homebrew and in `uv tool` environments. Local
@@ -65,7 +67,16 @@ or starts a model implicitly. See [model and license details](image-kit/README.m
 
 ### A conversation that stays with you
 
+Chat screenshots use neutral demonstration content.
+
 ![Local chat, streaming and saved history](docs/screenshots/chat.jpg)
+
+<details>
+<summary>Mobile / Мобильный чат</summary>
+
+![Mobile chat](docs/screenshots/chat-mobile.jpg)
+
+</details>
 
 Replies arrive as a stream. Prompt processing, reasoning and answering have
 visible states. Conversations, partial replies, system prompts, parameters and
@@ -120,10 +131,10 @@ stop the workflow instead of being passed to the image model.
 .venv/bin/python run.py check           # both Python suites + SSE parser
 ```
 
-**105 Python tests** pass across both components (48 manager + 57 image engine),
+**127 Python tests** pass across both components (68 manager + 59 image engine),
 plus JavaScript syntax and SSE parser checks. These checks need the installed
 Image Kit dependencies; they do not download models or run a GPU benchmark.
-The optional [CI template](ci/checks.yml.example) is provided separately.
+[CI](.github/workflows/checks.yml) checks the manager on Linux and image contracts on macOS. Metal parity tests require a GPU; hosted runners without Metal explicitly skip those tests. Local Apple Silicon checks cover all 127 Python tests.
 See the [installation and recovery checks](docs/reliability.md) for their scope.
 
 ## Local by design

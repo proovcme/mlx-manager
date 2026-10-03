@@ -4,6 +4,8 @@ Retains the original quantized projection shapes and arithmetic order. Padding
 and multi-image batches fall back to the original joint transformer path.
 """
 
+from importlib.metadata import version, PackageNotFoundError
+
 import mlx.core as mx
 from mlx import nn
 from mlx.core.fast import scaled_dot_product_attention as sdpa
@@ -50,6 +52,23 @@ def fused_rope(x, cosine, sine):
     )[0]
 
 
+def exact_conditioning_supported():
+    """Only the pinned backend and GPU with measured bitwise parity are enabled.
+
+    M1 CI demonstrated that splitting the same attention arithmetic can select
+    different reductions on another GPU. Unknown devices keep the joint path.
+    """
+    if mx.default_device() != mx.gpu or mx.__version__ != '0.32.2':
+        return False
+    try:
+        if version('mflux') != '0.20.0':
+            return False
+    except PackageNotFoundError:
+        return False
+    info = mx.device_info()
+    return info.get('device_name') == 'Apple M4' and info.get('architecture') == 'applegpu_g16g'
+
+
 class ConditionedTransformer:
     """One denoising job's wrapper; reset between images, even for equal prompts.
 
@@ -61,6 +80,7 @@ Modes isolate fused RoPE from prefix reuse so timing can attribute each gain.
         if mode not in ("rope", "prefix", "prefix-rope"):
             raise ValueError("unknown optimization mode")
         self.model = transformer
+        self.reuse_supported = exact_conditioning_supported()
         self.prefix = mode != "rope"
         self.rope = fused_rope if mode != "prefix" else Qwen21Attention._apply_rope
         self._first = mx.compile(self._joint)
@@ -76,6 +96,9 @@ Modes isolate fused RoPE from prefix reuse so timing can attribute each gain.
         self.fallback_count = 0
 
     def __call__(self, t, config, hidden_states, encoder_hidden_states, encoder_hidden_states_mask=None):
+        if not self.reuse_supported:
+            self.fallback_count += 1
+            return self.model(t, config, hidden_states, encoder_hidden_states, encoder_hidden_states_mask)
         shape = (config.width, config.height, hidden_states.shape, encoder_hidden_states.shape)
         if (self._conditioning is None or self._shape != shape
                 or self._conditioning[0] is not encoder_hidden_states

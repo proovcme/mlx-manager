@@ -1,0 +1,36 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  manager:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s tests -v
+        working-directory: manager
+      - run: node --check manager/static/app.js && node manager/tests/test_stream_parser.js && node manager/tests/test_history_navigation.js && node manager/tests/test_stream_rendering.js
+      - run: git diff --check
+  image-contracts:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install ./image-kit
+      - name: Image contracts (Metal parity runs only when a GPU is available)
+        run: python -m unittest discover -s tests -v
+        working-directory: image-kit
+      - run: git diff --check

@@ -25,23 +25,53 @@ def path(name, default):
 
 DATA_ROOT = path('DATA_ROOT',Path.home()/'.local/share/mlx-manager')
 OUTPUT_ROOT = DATA_ROOT / 'outputs'
-EXTERNAL_CHAT_LABEL = setting('EXTERNAL_CHAT_LABEL','org.mlx-manager.external_chat')
-EXTERNAL_CHAT_PLIST = path('EXTERNAL_CHAT_PLIST',Path.home()/'Library/LaunchAgents'/f'{EXTERNAL_CHAT_LABEL}.plist')
-EXTERNAL_CHAT_MODEL = path('EXTERNAL_CHAT_MODEL',Path.home()/'models/ExternalChat')
-EXTERNAL_CHAT_LOG = path('EXTERNAL_CHAT_LOG',DATA_ROOT/'external_chat.log')
+# Optional, explicitly configured external LaunchAgent; disabled on clean installs.
+EXTERNAL_ENABLED = str(setting('EXTERNAL_ENABLED',False)).lower() in ('true','1','yes')
+EXTERNAL_LABEL = setting('EXTERNAL_LABEL','org.mlx-manager.external')
+EXTERNAL_PLIST = path('EXTERNAL_PLIST',Path.home()/'Library/LaunchAgents'/f'{EXTERNAL_LABEL}.plist')
+EXTERNAL_MODEL = path('EXTERNAL_MODEL',DATA_ROOT/'external-model')
+EXTERNAL_LOG = path('EXTERNAL_LOG',DATA_ROOT/'external.log')
+EXTERNAL_MODEL_ID = setting('EXTERNAL_MODEL_ID',EXTERNAL_MODEL.name)
+EXTERNAL_ENDPOINT = setting('EXTERNAL_ENDPOINT','http://127.0.0.1:1926')
+PROXY_ENDPOINT = setting('PROXY_ENDPOINT',EXTERNAL_ENDPOINT)
+PROXY_LABEL = setting('PROXY_LABEL','')
+PROXY_PLIST = path('PROXY_PLIST',Path.home()/'Library/LaunchAgents'/f'{PROXY_LABEL}.plist')
+SESSION_PATH = setting('SESSION_PATH','')
+SESSION_HEADER = setting('SESSION_HEADER','')
+STATS_PATH = setting('STATS_PATH','')
+from urllib.parse import urlsplit
+for endpoint in (EXTERNAL_ENDPOINT,PROXY_ENDPOINT):
+    parsed=urlsplit(endpoint)
+    if parsed.scheme != 'http' or parsed.hostname not in ('localhost','127.0.0.1') or parsed.username or parsed.password or parsed.path not in ('','/') or parsed.query or parsed.fragment:
+        raise ValueError('External chat endpoints must be loopback HTTP origins')
+EXTERNAL_PORT = urlsplit(EXTERNAL_ENDPOINT).port or 80
+PROXY_PORT = urlsplit(PROXY_ENDPOINT).port or 80
 BUNDLED_IMAGE_ROOT = ROOT.parent/'image-kit'
 IMAGE_ROOT = path('IMAGE_ROOT',BUNDLED_IMAGE_ROOT if BUNDLED_IMAGE_ROOT.is_dir() else ROOT.parent/'mlx-image-kit')
 IMAGE_ENVIRONMENTS = [IMAGE_ROOT/'.venv/bin/python', ROOT.parent/'.venv/bin/python']
 IMAGE_PYTHON = path('IMAGE_PYTHON',next((p for p in IMAGE_ENVIRONMENTS if p.is_file()),IMAGE_ENVIRONMENTS[0]))
-HUB = Path(os.environ.get('HF_HUB_CACHE',str(Path(os.environ.get('HF_HOME',str(Path.home()/'.cache/huggingface')))/'hub'))).expanduser()
+def hub_cache(environ=None):
+    env = os.environ if environ is None else environ
+    cache = Path(env.get('XDG_CACHE_HOME', str(Path.home()/'.cache'))).expanduser()
+    hf_home = Path(env.get('HF_HOME', str(cache/'huggingface'))).expanduser()
+    return Path(env.get('HF_HUB_CACHE', env.get('HUGGINGFACE_HUB_CACHE', str(hf_home/'hub')))).expanduser()
+
+
+HUB = hub_cache()
 IMAGE_CACHE = path('IMAGE_CACHE',HUB/'models--mlx-community--Qwen-Image-2.1-MLX-4bit')
-CHAT_PROXY_V2 = 'http://127.0.0.1:1927'
-CHAT_PROXY_LABEL = setting('CHAT_PROXY_LABEL','org.mlx-manager.chat_proxy')
-CHAT_PROXY_PLIST = path('CHAT_PROXY_PLIST',Path.home()/'Library/LaunchAgents'/f'{CHAT_PROXY_LABEL}.plist')
-EXTERNAL_CHAT_ENDPOINT = 'http://127.0.0.1:1926'
 MANAGER_HOST = '127.0.0.1'
 MANAGER_PORT = int(setting('PORT',1924))
-MODEL_ROOTS = [Path(p).expanduser() for p in LOCAL.get('MODEL_ROOTS',[])]
+def configured_model_roots():
+    values = setting('MODEL_ROOTS', [])
+    if isinstance(values, str):
+        try:values = json.loads(values)
+        except ValueError as exc:raise ValueError('MLX_MANAGER_MODEL_ROOTS must be a JSON array of directory paths') from exc
+    if not isinstance(values, list) or not all(isinstance(p,str) and p.strip() for p in values):
+        raise ValueError('MODEL_ROOTS must be an array of non-empty directory paths')
+    return [Path(os.path.expandvars(p)).expanduser() for p in values]
+
+
+MODEL_ROOTS = configured_model_roots()
 
 
 def image_snapshot() -> Path | None:

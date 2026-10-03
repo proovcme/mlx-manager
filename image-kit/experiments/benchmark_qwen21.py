@@ -6,6 +6,7 @@ saves comparison images under the ignored local report directory.
 Requires the local manager to be idle and holds its heavy-workload file lock.
 """
 
+from experiments.manager_config import add_arguments, local_snapshot
 import argparse
 import fcntl
 import gc
@@ -60,8 +61,7 @@ def main():
     parser.add_argument("--cache-modes", nargs="+", choices=("off", "balanced"), default=["off", "balanced"])
     parser.add_argument("--decode", action="store_true", help="decode and compare every measured PNG after releasing transformer")
     parser.add_argument("--fail-on-drift", action="store_true", help="stop at the first nonidentical latent, including warmup")
-    parser.add_argument("--manager-url", default="http://127.0.0.1:1924")
-    parser.add_argument("--lock-path", type=Path, default=Path.home() / ".local/share/mlx-manager/heavy.lock")
+    add_arguments(parser)
     parser.add_argument("--report", type=Path, default=Path("local/qwen21-optimizations.json"))
     args = parser.parse_args()
     prompt = args.prompt_file.read_text().strip() if args.prompt_file else PROMPT
@@ -74,9 +74,8 @@ def main():
     with args.lock_path.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         require_idle(args.manager_url)
-        cache = Path.home() / ".cache/huggingface/hub/models--mlx-community--Qwen-Image-2.1-MLX-4bit"
-        revision = (cache / "refs/main").read_text().strip()
-        snapshot = engine._snapshot(cache / "snapshots" / revision)
+        snapshot = engine._snapshot(local_snapshot())
+        revision = snapshot.name
         model_config = ModelConfig.qwen_image_21()
         print("Encoding neutral prompt with the existing native Q4 encoder", flush=True)
         began_encoding = time.perf_counter()
