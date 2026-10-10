@@ -36,7 +36,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("mlx-manager: " + fmt % args + "\n")
+        sys.stderr.write("uzel: " + fmt % args + "\n")
 
     def _json(self, status: int, value: dict) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")

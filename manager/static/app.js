@@ -1,4 +1,4 @@
-const managerBase = document.querySelector('meta[name="mlx-manager-base"]')?.content.replace(/\/+$/, "") || "";
+const managerBase = (document.querySelector('meta[name="uzel-base"]') || document.querySelector('meta[name="mlx-manager-base"]'))?.content.replace(/\/+$/, "") || "";
 const managerURL = path => managerBase + path;
 const $ = id => document.getElementById(id);
 const bytes = n => n == null ? '—' : (n / 2 ** 30).toFixed(1) + ' ГБ';

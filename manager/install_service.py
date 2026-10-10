@@ -20,13 +20,13 @@ SETTING_KEYS = ('PORT','DATA_ROOT','MODEL_ROOTS','IMAGE_ROOT','IMAGE_PYTHON','IM
 
 def service_environment(environ=None):
     env = os.environ if environ is None else environ
-    keys = (*ENVIRONMENT_KEYS, *('MLX_MANAGER_'+key for key in SETTING_KEYS))
+    keys = (*ENVIRONMENT_KEYS, *(prefix+key for prefix in ('UZEL_', 'MLX_MANAGER_') for key in SETTING_KEYS))
     return {key:env[key] for key in keys if key in env}
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--label',default='org.mlx-manager.service')
+    parser.add_argument('--label',default='org.uzel.service')
     args=parser.parse_args()
     if not all(c.isalnum() or c in '.-' for c in args.label):
         parser.error('Invalid LaunchAgent label')

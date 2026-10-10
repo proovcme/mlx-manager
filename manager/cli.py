@@ -1,4 +1,4 @@
-"""Small CLI for the local MLX Manager; no heavy model starts on import."""
+"""Small CLI for the local UZEL; no heavy model starts on import."""
 
 import argparse
 import json
@@ -24,13 +24,13 @@ def call(method: str, path: str, data: dict | None = None) -> dict:
             message = json.load(exc).get("error", str(exc))
         except ValueError:
             message = str(exc)
-        raise SystemExit(f"mlx-manager: {message}") from exc
+        raise SystemExit(f"uzel: {message}") from exc
     except urllib.error.URLError as exc:
-        raise SystemExit(f"mlx-manager: service unavailable at {BASE}: {exc.reason}") from exc
+        raise SystemExit(f"uzel: service unavailable at {BASE}: {exc.reason}") from exc
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="mlx-manager")
+    parser = argparse.ArgumentParser(prog="uzel")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     mode = sub.add_parser("mode")

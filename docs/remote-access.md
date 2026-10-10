@@ -2,7 +2,7 @@
 
 The manager supports a path prefix behind an authenticated reverse proxy. It still listens on localhost; the gateway supplies authentication and HTTPS.
 
-For a deployment at `/mlx/`, replace the HTML meta value `mlx-manager-base` with `/mlx` in the gateway response. The CSS and JavaScript use relative URLs; API calls, streaming chat, image previews and downloads use the same prefix.
+For a deployment at `/mlx/`, replace the HTML meta value `uzel-base` with `/mlx` in the gateway response. The CSS and JavaScript use relative URLs; API calls, streaming chat, image previews and downloads use the same prefix.
 
 The gateway must authenticate **every** request, including API calls, static assets and generated images. Validate the public Origin for mutations, then remove Origin, Cookie and Authorization before forwarding. Supply the manager's localhost Host header. Keep response buffering disabled for SSE and allow long responses. Propagate client disconnects to the upstream.
 

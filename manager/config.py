@@ -16,7 +16,7 @@ except FileNotFoundError:
 
 
 def setting(name, default):
-    return os.environ.get('MLX_MANAGER_'+name, LOCAL.get(name,default))
+    return os.environ.get('UZEL_'+name, os.environ.get('MLX_MANAGER_'+name, LOCAL.get(name,default)))
 
 
 def path(name, default):

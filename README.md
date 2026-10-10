@@ -1,8 +1,8 @@
 <div align="center">
 
-# MLX Manager
+# UZEL
 
-### Models. Chat. Images. Documents. On your Mac.
+### Local model management on Apple Silicon
 
 A local toolkit for Apple Silicon — a model workbench and an image engine in one repository.
 
@@ -33,9 +33,15 @@ engines are installed separately. Model weights are not included.
 
 Requires **macOS on Apple Silicon** and **Python 3.12+**.
 
+**Chat also requires a separately installed
+[MLX LM](https://github.com/ml-explore/mlx-lm) or
+[oMLX](https://github.com/jundot/omlx) engine and downloaded text-model weights.**
+The installation below includes Manager and Image Kit; text engines and model
+weights are not included.
+
 ```sh
-git clone https://github.com/proovcme/mlx-manager.git
-cd mlx-manager
+git clone https://github.com/proovcme/uzel.git
+cd uzel
 python3.12 -m venv .venv
 .venv/bin/python -m pip install ./image-kit
 .venv/bin/python run.py
@@ -88,15 +94,9 @@ drafts are saved locally; **New Chat** keeps earlier conversations in history.
 
 ![Image generation stages and step progress](docs/screenshots/progress.jpg)
 
-Follow encoder loading, denoising steps, cache counters, decoding and elapsed
-time. Completed images go into the gallery, with PNG download and parameter
-reuse. Old images without recorded parameters remain viewable.
-
-Gallery items can be moved individually or together to Manager's recoverable
-local image trash. PNGs and saved parameters move together; chats remain intact.
-A static prompt guide is available separately from generation settings. Long image
-prompts are checked against the encoder's real token limit and rejected explicitly
-rather than silently truncated.
+Follow generation stages, steps and elapsed time. Download completed images as
+PNG, reuse saved parameters or move gallery items to recoverable local trash.
+[Prompts, limits and series](image-kit/docs/manager-workflow.md).
 
 <details>
 <summary>Gallery</summary>
@@ -128,31 +128,12 @@ and `search_sources`. Its bundled stdio server is not launched by Manager.
 
 ## From an idea to an image series
 
-![Prompt expansion and series](docs/screenshots/prompt-series.jpg)
+Choose Qwen Image and open **⋯ → Настройки изображения**. Optionally expand
+the prompt with an installed text model, review it, and set **В серии** to 1–20.
+Manager generates the images sequentially with different seeds; completed
+images stay in the gallery.
 
-Choose Qwen Image, open **⋯ → Настройки изображения**, and enable
-**Улучшать промпт перед генерацией** (expand before generating).
-Select an installed text model; a small Qwen3-4B is a practical starting point.
-**Улучшить промпт** previews a rewrite without rendering. You can edit the resulting
-prompt or restore your original idea. The automatic mode rewrites once, unloads the
-text model, then generates images sequentially. No weights are downloaded.
-
-Set **В серии** to 1–20. Each image uses the same prompt and settings, with seeds
-`seed`, `seed + 1`, and so on (wrapping at 32 bits). The UI shows the image number
-and its generation steps. Stop cancels the current image and all remaining images;
-completed images stay in the gallery. Refreshing the page retains control. Restarting
-the service interrupts the pending queue; it does not automatically launch more images.
-
-The compact local instructions follow Qwen's
-[documented prompt rewrite approach](https://github.com/QwenLM/Qwen-Image-2.1/tree/main/prompt_rewrite):
-a description of the finished frame, composition, materials and lighting; requested
-lettering keeps its original script. This uses your chosen general text model,
-not the dedicated PE checkpoint. A rewrite adds creative details and can alter the
-result; review it when exact fidelity matters. Inference settings remain under your control.
-Original and expanded prompts stay in local history. Failed or truncated rewrites
-stop the workflow instead of being passed to the image model.
-
-[Exact acceleration measurements](docs/acceleration.md) · [Reference-image investigation](docs/reference-images.md)
+[Prompt expansion, series and cancellation — Image Kit guide](image-kit/docs/manager-workflow.md).
 
 ## A few commands
 
@@ -196,3 +177,6 @@ and can change an image; the paired measurements and limits are documented in
 
 [Manager setup & API](manager/README.md) · [Image generation & batch](image-kit/README.md) ·
 [Русская документация](README.ru.md) · [MIT license](LICENSE)
+
+UZEL was previously named MLX Manager. Existing data directories and
+`MLX_MANAGER_*` settings remain compatible; new settings may use `UZEL_*`.

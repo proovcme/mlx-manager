@@ -9,6 +9,8 @@
 Qwen-Image 2.1 · native 4-bit MLX · Mac mini M4, 24 GB unified memory<br>
 1152×768 · 20 steps · `balanced` cache
 
+[Using Manager: prompt expansion and image series](docs/manager-workflow.md).
+
 ## One model, many visual languages
 
 Every image below was generated locally with the same 4-bit model and 20 denoising steps. These are showcase outputs, not paired benchmarks. Open an image to inspect it at full resolution.

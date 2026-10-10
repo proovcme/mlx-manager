@@ -1,6 +1,6 @@
-# LES documents in MLX Manager
+# LES documents in UZEL
 
-MLX Manager remains the chat/image interface and model owner. [LES RAG](https://github.com/proovcme/LES)
+UZEL remains the chat/image interface and model owner. [LES RAG](https://github.com/proovcme/LES)
 keeps document ingestion, OCR, indexing and storage. No corpus is copied into Manager.
 
 Open **⋯ next to the message field → Документы LES**. Enter the address of the

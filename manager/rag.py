@@ -159,7 +159,7 @@ class Client:
 
     def tool(self, name, arguments):
         if not self.initialized:
-            result = self.rpc('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'mlx-manager', 'version': '1'}})
+            result = self.rpc('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'uzel', 'version': '1'}})
             if result.get('protocolVersion') != '2025-03-26':
                 raise RagError('MCP-шлюз должен поддерживать протокол 2025-03-26')
             self.initialized = True

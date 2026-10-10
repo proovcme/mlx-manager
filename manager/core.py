@@ -51,7 +51,7 @@ class Manager(ExternalChatMixin):
         try:
             fcntl.flock(self._singleton, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ManagerError("MLX Manager is already running") from exc
+            raise ManagerError("UZEL is already running") from exc
         self._heavy = open(config.DATA_ROOT / "heavy.lock", "a+")
         self._heavy_held = False
         self._mu = threading.RLock()

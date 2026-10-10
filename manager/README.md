@@ -1,4 +1,4 @@
-# MLX Manager
+# UZEL
 
 [Русская документация](README.ru.md)
 
@@ -155,3 +155,6 @@ choose a document set and enable retrieval. The chat model selects search querie
 and reads source context; references collapse beneath the answer. A model with
 tool support is required. Files and indexing stay in LES.
 See [connection setup and MCP transport limits](../docs/les-rag.md).
+
+UZEL was previously named MLX Manager. Existing data directories and
+`MLX_MANAGER_*` settings remain compatible; new settings may use `UZEL_*`.
