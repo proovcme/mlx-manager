@@ -147,3 +147,11 @@ Original and expanded prompts stay in local history. Failed or truncated rewrite
 stop the workflow instead of being passed to the image model.
 
 Optional external services use a [neutral, disabled-by-default adapter](../docs/external-chat.md). Memory diagnostics refresh independently of workload controls; their age is reported in the status API. Stored conversations remain readable after a model is removed.
+
+### LES documents
+
+Open **⋯ beside the message field → Документы LES** to connect a running LES API,
+choose a document set and enable retrieval. The chat model selects search queries
+and reads source context; references collapse beneath the answer. A model with
+tool support is required. Files and indexing stay in LES.
+See [connection setup and MCP transport limits](../docs/les-rag.md).

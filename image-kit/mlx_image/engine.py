@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+from mlx_image.prompt_limits import validate_prompt_tokens
 import os
 import sys
 import tempfile
@@ -352,6 +353,7 @@ def run_jobs(
                     embeds = mask = None
                     try:
                         began = time.monotonic()
+                        validate_prompt_tokens(qwen.tokenizers["qwen21"], state.job.prompt)
                         embeds, mask = Qwen21PromptEncoder.encode_prompt(
                             prompt=state.job.prompt,
                             prompt_cache=qwen.prompt_cache,

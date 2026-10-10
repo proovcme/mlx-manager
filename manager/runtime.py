@@ -147,11 +147,13 @@ class ModelRuntime:
         with self.open_chat(messages, max_tokens, temperature) as response:
             return json.load(response)
 
-    def open_chat(self, messages, max_tokens, temperature, stream=False, on_socket=None):
+    def open_chat(self, messages, max_tokens, temperature, stream=False, on_socket=None, tools=None):
         if self.state != "ready" or not self.running():
             raise RuntimeError("Selected model is not ready")
         payload = {"model": self.api_model, "messages": messages, "stream": stream,
                    "max_tokens": max_tokens, "temperature": temperature}
+        if tools:
+            payload.update(tools=tools, tool_choice="auto")
         request = urllib.request.Request(BASE + "/v1/chat/completions", data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
         return open_stream(request, on_socket) if on_socket else urllib.request.urlopen(request, timeout=300)

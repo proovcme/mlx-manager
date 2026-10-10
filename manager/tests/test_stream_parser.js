@@ -22,6 +22,7 @@ async function run(wire, prefix="/mlx/", events=[]) {
   const deltas=await run(': keepalive\r\n\r\ndata: {"choices":[{"delta":{"reasoning":"Думаю"}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"Ответ: 你好"}}]}\r\n\r\ndata: [DONE]\r\n\r\n');
   const events=[];await run('data: {"type":"web_search","phase":"searching"}\n\ndata: {"type":"web_search","phase":"ready","sources":[{"id":1,"title":"Источник"}]}\n\ndata: [DONE]\n\n', '/mlx/', events);
   assert.equal(events[0].phase, 'searching');assert.equal(events[1].sources[0].title, 'Источник');
+  const ragEvents=[];await run('data: {"type":"rag","phase":"planning"}\n\ndata: {"type":"rag","phase":"ready","sources":[{"id":1,"title":"Document"}]}\n\ndata: [DONE]\n\n','/mlx/',ragEvents);assert.equal(ragEvents[0].phase,'planning');assert.equal(ragEvents[1].sources[0].title,'Document');
   assert.equal(deltas[0].reasoning,'Думаю'); assert.equal(deltas[1].content,'Ответ: 你好');
   await assert.rejects(run('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'),/до завершения/);
   await assert.rejects(run('data: {"error":"model failed"}\n\n'),/model failed/);

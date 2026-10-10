@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 """CLI behavior tests with neutral, synthetic prompts and no model downloads."""
 
 import contextlib
@@ -552,7 +553,7 @@ class BatchUxTests(unittest.TestCase):
             qwen.prompt_cache = FakeCache()
 
         def init_tokenizers(qwen, snapshot):
-            qwen.tokenizers = {"qwen21": object()}
+            qwen.tokenizers = {"qwen21": SimpleNamespace(template=None, max_length=2048, add_special_tokens=True, tokenizer=lambda *args, **kwargs: {"input_ids": [1]})}
 
         def denoise(job, transformer, embeds, mask, config, on_step):
             for step in range(1, job.steps + 1):

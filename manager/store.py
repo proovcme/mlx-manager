@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 import config
 
@@ -106,3 +107,35 @@ class Store:
         if not path.is_file() or path.resolve().parent != config.OUTPUT_ROOT.resolve():
             raise ValueError('Image not found')
         return path
+
+    def trash_images(self, ids):
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 1000:
+            raise ValueError('Select between 1 and 1000 distinct images')
+        if any(not isinstance(key, str) for key in ids) or len(set(ids)) != len(ids):
+            raise ValueError('Invalid image identifiers')
+        # Validate every target before moving anything. Client paths are never accepted.
+        paths = [(key, self.output(key)) for key in ids]
+        if any(path.is_symlink() for _, path in paths):
+            raise ValueError('Symbolic links cannot be moved from the gallery')
+        batch = config.DATA_ROOT / 'image-trash' / uuid.uuid4().hex
+        batch.mkdir(parents=True, mode=0o700)
+        moved = []
+        try:
+            with self.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                rows = []
+                for key, path in paths:
+                    row = db.execute('SELECT * FROM images WHERE id=?', (key,)).fetchone()
+                    if row:
+                        rows.append(dict(row))
+                    path.rename(batch / path.name)
+                    moved.append(path)
+                    db.execute('DELETE FROM images WHERE id=?', (key,))
+                metadata = batch / 'metadata.json'
+                metadata.write_text(json.dumps(rows, ensure_ascii=False))
+                os.chmod(metadata, 0o600)
+        except Exception:
+            for path in reversed(moved):
+                (batch / path.name).rename(path)
+            raise
+        return dict(moved=len(moved), location=str(batch))

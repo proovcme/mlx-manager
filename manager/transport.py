@@ -3,7 +3,7 @@ import http.client
 import urllib.request
 
 
-def open_stream(request, on_socket, timeout=300):
+def open_stream(request, on_socket, timeout=300, redirects=True):
     class Connection(http.client.HTTPConnection):
         def connect(self):
             super().connect()
@@ -13,4 +13,20 @@ def open_stream(request, on_socket, timeout=300):
         def http_open(self, request):
             return self.do_open(Connection, request)
 
-    return urllib.request.build_opener(Handler()).open(request, timeout=timeout)
+    class SecureConnection(http.client.HTTPSConnection):
+        def connect(self):
+            super().connect()
+            on_socket(self.sock)
+
+    class SecureHandler(urllib.request.HTTPSHandler):
+        def https_open(self, request):
+            return self.do_open(SecureConnection, request, context=self._context)
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    handlers = [Handler(), SecureHandler()]
+    if not redirects:
+        handlers.extend([NoRedirect(), urllib.request.ProxyHandler({})])
+    return urllib.request.build_opener(*handlers).open(request, timeout=timeout)

@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
+const context={};vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function modelIndicator(')),context);
+const model={id:'text',name:'Test model'};
+const status=(state,active='text',answering=false)=>context.modelIndicator(model,state,'text',active,answering);
+assert.equal(status(null).status,'Проверяем состояние…');
+assert.equal(status({mode:'idle'},null).status,'Не загружена');
+assert.equal(status({mode:'model',runtime:{state:'starting',model,backend:'mlx'}}).tone,'busy');
+assert.equal(status({mode:'model',runtime:{state:'ready',model,backend:'mlx'}}).status,'Загружена · mlx');
+assert.equal(status({mode:'model',runtime:{state:'ready',model,backend:'mlx'}},'text',true).status,'Отвечает · mlx');
+assert.equal(status({mode:'model',runtime:{state:'failed',model}}).tone,'error');
+assert.match(status({mode:'model',runtime:{state:'ready',model:{name:'Other'}}},'other').status,/сейчас работает: Other/);
+assert.equal(status({mode:'image',job:{state:'running'}}).status,'Генерация изображения · MLX');
+assert.equal(status({mode:'image',job:{state:'done'}}).status,'Режим изображений · MLX');
+console.log('Model name and state indicators: PASS');

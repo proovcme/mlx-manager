@@ -20,7 +20,7 @@ jobs:
           node-version: '22'
       - run: python -m unittest discover -s tests -v
         working-directory: manager
-      - run: node --check manager/static/app.js && node manager/tests/test_stream_parser.js && node manager/tests/test_history_navigation.js && node manager/tests/test_stream_rendering.js
+      - run: node --check manager/static/app.js && for test in manager/tests/*.js; do node "$test" || exit; done
       - run: git diff --check
   image-contracts:
     runs-on: macos-15

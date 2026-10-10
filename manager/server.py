@@ -115,6 +115,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, MANAGER.status())
             elif path == "/api/prompt/status":
                 self._json(200, {"job": MANAGER._enhancer.snapshot()})
+            elif path == "/api/rag/connection":
+                self._json(200, MANAGER.rag.public())
             elif path == "/api/catalog":
                 query = parse_qs(urlsplit(self.path).query)
                 self._json(200, MANAGER.model_catalog(refresh=query.get("refresh") == ["1"]))
@@ -157,7 +159,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         try:
-            if path == "/api/workspace":
+            if path == '/api/rag/connection':
+                self._json(200, MANAGER.rag.save(self._body()))
+            elif path == '/api/rag/datasets':
+                self._body()
+                self._json(200, {'datasets': MANAGER.rag.client().datasets()})
+            elif path == "/api/workspace":
                 self._json(200, MANAGER.store.put(self._body()))
             elif path == "/api/mode":
                 self._json(200, MANAGER.set_mode(self._body().get("mode", "")))
@@ -171,6 +178,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, MANAGER.trash_model(spec.get("token"), spec.get("confirmation")))
             elif path == "/api/prompt/enhance":
                 self._json(202, MANAGER._enhancer.start(self._body()))
+            elif path == "/api/image/trash":
+                self._json(200, MANAGER.store.trash_images(self._body().get("ids")))
             elif path == "/api/image/series":
                 spec = self._body()
                 spec["generate"] = True

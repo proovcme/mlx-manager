@@ -43,6 +43,7 @@ class ImageSession:
             super(engine.QwenImage21, qwen).__init__()
             engine.Qwen21Initializer._init_config(qwen, engine.ModelConfig.qwen_image_21())
             engine.Qwen21Initializer._init_tokenizers(qwen, str(snapshot))
+            engine.validate_prompt_tokens(qwen.tokenizers['qwen21'], prompt)
             self.embeds, self.mask = engine.Qwen21PromptEncoder.encode_prompt(
                 prompt=prompt, prompt_cache=qwen.prompt_cache,
                 tokenizer=qwen.tokenizers['qwen21'], text_encoder=te)

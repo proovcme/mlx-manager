@@ -27,6 +27,7 @@ from transport import open_stream
 from external_chat import ExternalChatMixin
 from telemetry import Telemetry
 import web_search
+import rag
 
 
 class ManagerError(Exception):
@@ -59,6 +60,7 @@ class Manager(ExternalChatMixin):
         self._chat_requests = {}
         self._cancelled_chats = {}
         self._enhancer = PromptEnhancer(self)
+        self.rag = rag.Connection()
         self.store = Store()
         self._job = self._load_job()
         self._worker = None
@@ -344,6 +346,8 @@ class Manager(ExternalChatMixin):
     def validate_chat(spec):
         if not isinstance(spec.get("web_search", False), bool):
             raise ManagerError("Invalid web search setting")
+        if spec.get('rag') is not None:
+            rag.validate_selection(spec['rag'])
         messages = spec.get("messages")
         max_tokens = spec.get("max_tokens", 1024)
         temperature = spec.get("temperature", 0.7)
@@ -381,11 +385,22 @@ class Manager(ExternalChatMixin):
                 with self._mu:
                     control['socket'] = sock
                     cancelled = control['cancelled'].is_set()
-                if cancelled:
+                if cancelled and sock is not None:
                     try:
                         sock.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+            if spec.get('rag'):
+                client = self.rag.client(control['cancelled'], track_socket)
+                flow = rag.retrieve(messages, rag.validate_selection(spec['rag']), client,
+                    lambda prepared, tools: self._rag_model_request(mode, prepared, tools, min(max_tokens, 2048), temperature, track_socket))
+                while True:
+                    try:
+                        event = next(flow)
+                    except StopIteration as finished:
+                        messages = finished.value
+                        break
+                    yield self._chat_event(event)
             if spec.get('web_search'):
                 query = web_search.query_for(messages)
                 yield self._chat_event({'type': 'web_search', 'phase': 'searching', 'query': query})
@@ -400,7 +415,8 @@ class Manager(ExternalChatMixin):
                             pass
                 result = web_search.search(query, control['cancelled'], track_search)
                 messages = web_search.with_sources(messages, result)
-                self.validate_chat(dict(spec, messages=messages))
+                if not spec.get('rag'):
+                    self.validate_chat(dict(spec, messages=messages))
                 yield self._chat_event(dict(result, type='web_search', phase='ready'))
             if control['cancelled'].is_set():
                 raise ManagerError('Chat cancelled')
@@ -427,6 +443,33 @@ class Manager(ExternalChatMixin):
             with self._mu:
                 self._chat_requests.pop(request_id, None)
             self.chat_leave()
+
+    def _rag_model_request(self, mode, messages, tools, max_tokens, temperature, track_socket):
+        try:
+            if mode == 'model':
+                response = self._runtime.open_chat(messages, max_tokens, temperature, on_socket=track_socket, tools=tools)
+            else:
+                self._ensure_proxy()
+                payload = {'model': config.EXTERNAL_MODEL_ID, 'messages': messages, 'max_tokens': max_tokens,
+                           'temperature': temperature, 'tools': tools, 'tool_choice': 'auto', 'stream': False}
+                request = urllib.request.Request(config.PROXY_ENDPOINT + '/v1/chat/completions', data=json.dumps(payload).encode(),
+                                                headers={'Content-Type': 'application/json'}, method='POST')
+                response = open_stream(request, track_socket)
+            with response:
+                raw = response.read(rag.MAX_REPLY + 1)
+            if len(raw) > rag.MAX_REPLY:
+                raise rag.RagError('Ответ модели превышает допустимый размер')
+            value = json.loads(raw)
+            reply = value['choices'][0]['message']
+            if not isinstance(reply, dict):
+                raise ValueError()
+            return reply
+        except (KeyError, IndexError, ValueError):
+            raise rag.RagError('Модель не вернула корректный ответ с tools') from None
+        except urllib.error.HTTPError:
+            raise rag.RagError('Движок отклонил вызов tools. Проверьте поддержку инструментов моделью') from None
+        finally:
+            track_socket(None)
 
     def cancel_chat(self, request_id):
         with self._mu:
@@ -460,7 +503,8 @@ class Manager(ExternalChatMixin):
         return b'data: ' + json.dumps(value, ensure_ascii=False).encode() + b'\n\n'
 
     def chat(self, spec):
-        if spec.get('web_search'):
+        if spec.get('web_search') or spec.get('rag'):
+            rag_result = None
             content, reasoning, result, finish = '', '', None, 'stop'
             for line in self.stream_chat(spec):
                 if not line.startswith(b'data: ') or line.strip() == b'data: [DONE]':
@@ -470,12 +514,14 @@ class Manager(ExternalChatMixin):
                     raise ManagerError(str(chunk['error']))
                 if chunk.get('type') == 'web_search' and chunk.get('phase') == 'ready':
                     result = chunk
+                if chunk.get('type') == 'rag' and chunk.get('phase') == 'ready':
+                    rag_result = chunk
                 for choice in chunk.get('choices', []):
                     delta = choice.get('delta', {})
                     content += delta.get('content') or ''
                     reasoning += delta.get('reasoning_content') or delta.get('reasoning') or ''
                     finish = choice.get('finish_reason') or finish
-            return {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content, 'reasoning_content': reasoning}, 'finish_reason': finish}], 'web_search': result}
+            return {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content, 'reasoning_content': reasoning}, 'finish_reason': finish}], 'web_search': result, 'rag': rag_result}
         messages, max_tokens, temperature = self.validate_chat(spec)
         with self._mu:
             self._prompt_guard()
@@ -573,8 +619,8 @@ class Manager(ExternalChatMixin):
             if pressure is None or pressure < 20:
                 raise ManagerError("Memory pressure is unknown or too high for image generation")
             prompt = spec.get("prompt")
-            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
-                raise ManagerError("Prompt must contain 1-4000 characters")
+            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 30000:
+                raise ManagerError("Prompt must contain 1-30000 characters")
             width, height = spec.get("width", 1024), spec.get("height", 1024)
             steps, seed = spec.get("steps", 30), spec.get("seed", 42)
             cache = spec.get("cache", "off")
@@ -625,7 +671,7 @@ class Manager(ExternalChatMixin):
             if isinstance(expansion, dict):
                 self._job['parameters']['prompt_expansion'] = {
                     k: expansion[k] for k in ('original_prompt','model')
-                    if isinstance(expansion.get(k), str) and len(expansion[k]) <= 4000}
+                    if isinstance(expansion.get(k), str) and len(expansion[k]) <= 30000}
             self._save_job()
             assert worker.stdin is not None
             try:
@@ -669,6 +715,7 @@ class Manager(ExternalChatMixin):
             if self._job and self._worker is worker and (job_id is None or self._job['id'] == job_id):
                 try:
                     recorded = json.loads((config.DATA_ROOT / f"image-{self._job['id']}-progress.json").read_text())
+                    self._job['progress'] = recorded
                     if isinstance(recorded.get('error'), str):
                         self._job['error'] = recorded['error'][:2000]
                 except (OSError, ValueError, AttributeError):

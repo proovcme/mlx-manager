@@ -39,8 +39,8 @@ def clean_prompt(content, finish_reason):
     if text.startswith('{'):
         value = json.loads(text)
         text = value.get('rewritten_prompt', '') if isinstance(value, dict) else ''
-    if not isinstance(text, str) or not text.strip() or len(text) > 4000:
-        raise ValueError('The expanded prompt must contain 1-4000 characters')
+    if not isinstance(text, str) or not text.strip() or len(text) > 30000:
+        raise ValueError('The expanded prompt must contain 1-30000 characters')
     return text.strip()
 
 
@@ -85,8 +85,8 @@ class PromptEnhancer:
 
     def start(self, spec, expand=True):
         prompt, model_id = spec.get('prompt'), spec.get('model')
-        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
-            raise ValueError('Prompt must contain 1-4000 characters')
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 30000:
+            raise ValueError('Prompt must contain 1-30000 characters')
         generate = spec.get('generate', False)
         count = spec.get('count', 1)
         if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 20:
